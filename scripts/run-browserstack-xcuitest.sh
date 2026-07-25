@@ -47,7 +47,7 @@ selected_device="$(
     [
       .[]
       | select(.os == "ios")
-      | select(.real_mobile == true)
+      | select((.realMobile // .real_mobile // false) == true)
       | select(.device | startswith("iPhone"))
       | select(
           try ((.os_version | tostring | split(".")[0] | tonumber) >= 26)
@@ -56,7 +56,13 @@ selected_device="$(
     ]
     | sort_by([
         (.os_version | tostring | split(".") | map(tonumber)),
-        (if (.device | contains("Pro")) then 1 else 0 end),
+        (
+          if .device == "iPhone 17 Pro" then 3
+          elif .device == "iPhone 17 Pro Max" then 2
+          elif (.device | contains("Pro")) then 1
+          else 0
+          end
+        ),
         .device
       ])
     | last
