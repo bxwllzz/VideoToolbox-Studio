@@ -216,20 +216,31 @@ done < <(
   jq -r '.devices[]?.sessions[]?.id // empty' "${result_directory}/build-final.json"
 )
 
-report_token="$(
-  grep -h -o 'VT_CLOUD_REPORT_BASE64=[A-Za-z0-9+/=]*' \
-    "${result_directory}"/logs/*.log 2>/dev/null \
-    | tail -n 1 \
-    | cut -d= -f2- \
-    || true
-)"
-readonly report_token
+extract_report() {
+  local marker="$1"
+  local output_path="$2"
+  local report_token
+  report_token="$(
+    grep -h -o "${marker}=[A-Za-z0-9+/=]*" \
+      "${result_directory}"/logs/*.log 2>/dev/null \
+      | tail -n 1 \
+      | cut -d= -f2- \
+      || true
+  )"
 
-if [[ -n "${report_token}" ]]; then
-  printf '%s' "${report_token}" \
-    | openssl base64 -d -A \
-    > "${result_directory}/capability-summary.json"
-fi
+  if [[ -n "${report_token}" ]]; then
+    printf '%s' "${report_token}" \
+      | openssl base64 -d -A \
+      > "${output_path}"
+  fi
+}
+
+extract_report \
+  "VT_CLOUD_CAPABILITY_REPORT_BASE64" \
+  "${result_directory}/capability-summary.json"
+extract_report \
+  "VT_CLOUD_SUSTAINED_REPORT_BASE64" \
+  "${result_directory}/sustained-encoding-summary.json"
 
 if [[ "${build_status}" != "passed" ]]; then
   echo "错误：BrowserStack 真机测试状态为 ${build_status:-未知}。" >&2
@@ -238,6 +249,11 @@ fi
 
 if [[ ! -s "${result_directory}/capability-summary.json" ]]; then
   echo "错误：测试虽然通过，但未从日志回收到能力摘要。" >&2
+  exit 1
+fi
+
+if [[ ! -s "${result_directory}/sustained-encoding-summary.json" ]]; then
+  echo "错误：测试虽然通过，但未从日志回收到持续硬编摘要。" >&2
   exit 1
 fi
 

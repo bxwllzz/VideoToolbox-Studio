@@ -18,9 +18,9 @@ BrowserStack 只承担日常功能回归和硬件能力筛查，不能替代目�
 3. 工作流分别打包 IPA 与 Runner ZIP；
 4. BrowserStack 自动重签并安装两者；
 5. 从账号可用列表中选择 iOS 26 或更高版本的真实 iPhone；
-6. XCUITest 启动 App、运行只读能力探针并断言三组严格硬件会话；
-7. 紧凑 JSON 通过测试日志回收；
-8. GitHub Artifact 保存构建响应、设备与会话元数据、仪器日志和能力摘要。
+6. XCUITest 启动 App，依次运行只读能力探针和多帧持续硬编验证；
+7. 两个紧凑 JSON 通过测试日志回收；
+8. GitHub Artifact 保存构建响应、设备与会话元数据、仪器日志、能力摘要和持续硬编摘要。
 
 ## 触发规则
 
@@ -30,4 +30,4 @@ BrowserStack 只承担日常功能回归和硬件能力筛查，不能替代目�
 
 ## 结果口径
 
-云真机测试通过只能证明本次 BrowserStack 设备、系统和构建组合通过。结果必须与 Artifact 中的 `selected-device.json`、`build-final.json` 和 `capability-summary.json` 一起解释，不能外推为所有 iPhone 均支持。
+云真机测试通过只能证明本次 BrowserStack 设备、系统和构建组合通过。结果必须与 Artifact 中的 `selected-device.json`、`build-final.json`、`capability-summary.json` 和 `sustained-encoding-summary.json` 一起解释，不能外推为所有 iPhone 均支持。

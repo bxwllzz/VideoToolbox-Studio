@@ -32,7 +32,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.bxwllzz.VideoToolboxStudio
         PRODUCT_NAME: VideoToolboxStudio
         PRODUCT_MODULE_NAME: VideoToolboxStudio
-        MARKETING_VERSION: 1.1.0
+        MARKETING_VERSION: 1.2.0
         CURRENT_PROJECT_VERSION: 1
         INFOPLIST_FILE: VideoToolboxStudio/Resources/Info.plist
         GENERATE_INFOPLIST_FILE: NO

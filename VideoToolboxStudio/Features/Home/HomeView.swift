@@ -4,6 +4,7 @@ struct HomeView: View {
     @ObservedObject var installationState: InstallationState
 
     @StateObject private var capabilityStore = CapabilityProbeStore()
+    @StateObject private var sustainedEncodingStore = SustainedEncodingStore()
     @State private var exportURL: URL?
     @State private var exportError: String?
 
@@ -18,6 +19,7 @@ struct HomeView: View {
         NavigationStack {
             List {
                 statusSection
+                sustainedEncodingSection
                 capabilitySection
                 buildSection
                 deviceSection
@@ -40,7 +42,7 @@ struct HomeView: View {
                     .foregroundStyle(.tint)
 
                 Text(
-                    "枚举系统编码器，针对 H.264 1080p、HEVC 1080p 和 HEVC 4K 创建严格硬件会话，并导出原始属性。"
+                    "用合成帧持续验证 H.264 与 HEVC 硬件编码，记录码流、吞吐、延迟、丢帧和实际输出格式。"
                 )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -52,6 +54,95 @@ struct HomeView: View {
                 }
             }
             .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var sustainedEncodingSection: some View {
+        Section("持续硬编验证") {
+            switch sustainedEncodingStore.phase {
+            case .idle:
+                Button {
+                    sustainedEncodingStore.run(buildReport: report)
+                } label: {
+                    Label("运行 2 秒持续编码", systemImage: "film.stack")
+                }
+                .accessibilityIdentifier("sustained-run-button")
+
+                Text("依次编码 H.264 1080p30、HEVC 1080p30 和 HEVC 4K30，共生成 180 帧纯本地合成画面。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            case .running:
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("正在生成并编码合成帧…")
+                }
+
+                Button(role: .destructive) {
+                    sustainedEncodingStore.cancel()
+                } label: {
+                    Label("取消测试", systemImage: "stop.fill")
+                }
+                .accessibilityIdentifier("sustained-cancel-button")
+            case .completed, .cancelled:
+                if let encodingReport = sustainedEncodingStore.report {
+                    ReportRow(
+                        title: "验收目标通过",
+                        value: "\(encodingReport.passedConfigurationCount)/\(encodingReport.configurations.count)",
+                        accessibilityIdentifier: "sustained-summary"
+                    )
+
+                    ForEach(encodingReport.configurations) { result in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(result.configuration.label)
+                                Spacer()
+                                Image(systemName: result.meetsAcceptanceTarget
+                                    ? "checkmark.circle.fill"
+                                    : "xmark.circle.fill")
+                                    .foregroundStyle(result.meetsAcceptanceTarget ? .green : .red)
+                            }
+                            Text(result.evidenceSummary.isEmpty ? "无有效证据" : result.evidenceSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier(
+                                    sustainedEvidenceIdentifier(for: result.configuration.label)
+                                )
+                            Text(
+                                "\(result.metrics.outputSampleBuffers)/\(result.metrics.requestedFrames) 帧 · "
+                                    + String(format: "%.1f fps", result.metrics.throughputFramesPerSecond)
+                                    + " · \(formattedBytes(result.metrics.totalEncodedBytes))"
+                            )
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if sustainedEncodingStore.phase == .cancelled {
+                    Label("测试已取消，已安全收尾当前编码会话。", systemImage: "stop.circle")
+                        .foregroundStyle(.orange)
+                }
+
+                if let encodingURL = sustainedEncodingStore.exportURL {
+                    ShareLink(item: encodingURL) {
+                        Label("导出 sustained-encoding-report.json", systemImage: "square.and.arrow.up")
+                    }
+                }
+
+                Button {
+                    sustainedEncodingStore.run(buildReport: report)
+                } label: {
+                    Label("重新运行", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("sustained-rerun-button")
+            case let .failed(message):
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Button("重试") {
+                    sustainedEncodingStore.run(buildReport: report)
+                }
+            }
         }
     }
 
@@ -210,6 +301,23 @@ struct HomeView: View {
             return commit
         }
         return String(commit.prefix(12))
+    }
+
+    private func sustainedEvidenceIdentifier(for label: String) -> String {
+        switch label {
+        case "H.264 1080p30":
+            "sustained-h264-1080p-evidence"
+        case "HEVC 1080p30":
+            "sustained-hevc-1080p-evidence"
+        case "HEVC 4K30":
+            "sustained-hevc-4k-evidence"
+        default:
+            "sustained-unknown-evidence"
+        }
+    }
+
+    private func formattedBytes(_ count: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .file)
     }
 }
 
