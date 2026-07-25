@@ -214,6 +214,7 @@ struct MediaTrackSummary: Codable, Equatable, Sendable {
     let languageCode: String?
     let extendedLanguageTag: String?
     let color: MediaColorSummary?
+    let metadata: [MetadataFieldSummary]
 }
 
 struct MetadataFieldSummary: Codable, Equatable, Hashable, Sendable {

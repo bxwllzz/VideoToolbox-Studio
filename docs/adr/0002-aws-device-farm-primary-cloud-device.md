@@ -1,6 +1,6 @@
 # ADR 0002：AWS Device Farm 作为默认云真机通道
 
-- 状态：待首次完整运行验证
+- 状态：工作流已接入，IAM OIDC 信任待修正
 - 日期：2026-07-26
 
 ## 背景
@@ -29,3 +29,10 @@ BrowserStack 已完成 M1、M2 的日常真机验证，但项目需要把自动�
 - 首次 PR 合并后，必须以 `main` 的真实 Device Farm Run 结果完成本 ADR 的状态更新；
 - 若 AWS 设备目录没有 iOS 26 或更高版本的 iPhone，工作流明确失败并保存设备清单，不静默降级到旧系统；
 - Device Farm 的平台级基础设施错误需要重跑确认，不能直接归因于 App。
+
+## 当前证据
+
+- Xcode 26.6 已成功构建并打包 `IOS_APP` 与 `XCTEST_UI_TEST_PACKAGE`；
+- 首次 `main` 运行在 `AssumeRoleWithWebIdentity` 阶段被角色信任策略拒绝，尚未进入 Device Farm；
+- 工作流只导出经过白名单筛选的 OIDC 声明用于匹配信任条件，不输出或保存令牌；
+- 在信任策略修正前，BrowserStack 继续承担跨供应商真机复核，但保持手动触发。

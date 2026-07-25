@@ -23,8 +23,9 @@ GitHub Actions 使用 OIDC（OpenID Connect，开放式身份连接）换取短�
 5. 从公共设备目录选择 iOS 26 或更高版本的 iPhone，优先 iPhone 17 Pro；
 6. 以 `XCTEST_UI` 类型执行只读探针、三轮持续硬编和取消恢复测试；
 7. 回收 Run、Job、文件、日志和截图，删除 Artifact 元数据中的临时下载 URL；
-8. 从 XCTest 日志提取 `capability-summary.json` 与 `sustained-encoding-summary.json`；
-9. 只有 Run 结果为 `PASSED` 且两个摘要都成功回收，工作流才判定通过。
+8. 从 XCTest 日志提取 `capability-summary.json`、`sustained-encoding-summary.json` 与 `transcode-summary.json`；
+9. 只有 Run 结果为 `PASSED` 且三个摘要都成功回收，工作流才判定通过。
+10. 无论终态如何，都向当前 commit 写入 `AWS Device Farm 真机回归` 提交状态及对应 Run 链接。
 
 ## 触发规则
 
@@ -43,6 +44,11 @@ AWS 结果只证明 Artifact 中记录的设备、系统、构建和 commit 组�
 - `metadata/run-final.json`：Device Farm 原始终态；
 - `capability-summary.json`：严格硬件会话摘要；
 - `sustained-encoding-summary.json`：三轮持续硬编摘要；
+- `transcode-summary.json`：真实媒体转码、非视频样本直通与保真复核摘要；
 - `artifacts/`：Device Farm 日志、文件与截图。
 
 Device Farm 报告中的临时下载 URL 不进入 GitHub Artifact。
+
+## 当前接入状态
+
+PR 的 Xcode 26.6 真机 App 与 XCUITest Runner 构建、打包已经通过。首次 `main` 运行在获取 AWS 临时凭据前被 IAM 角色的 OIDC 信任策略拒绝；工作流会额外保存只包含 `aud`、`sub`、仓库、分支、工作流和作业名的 `oidc-claims.json`，不保存 JWT 或任何临时凭据。应依据该产物收紧并修正角色信任条件，而不是改用长期 Access Key。

@@ -88,6 +88,11 @@ enum MediaInspector {
         let nominalFrameRate = try await track.load(.nominalFrameRate)
         let languageCode = try? await track.load(.languageCode)
         let extendedLanguageTag = try? await track.load(.extendedLanguageTag)
+        let metadataItems = try await track.load(.metadata)
+        var metadata: [MetadataFieldSummary] = []
+        for item in metadataItems {
+            metadata.append(await inspect(item))
+        }
         let firstFormat = formatDescriptions.first
         let codecType = firstFormat.map(CMFormatDescriptionGetMediaSubType) ?? 0
 
@@ -128,7 +133,11 @@ enum MediaInspector {
             },
             languageCode: languageCode,
             extendedLanguageTag: extendedLanguageTag,
-            color: color
+            color: color,
+            metadata: metadata.sorted {
+                ($0.identifier, $0.valueFingerprint)
+                    < ($1.identifier, $1.valueFingerprint)
+            }
         )
     }
 

@@ -114,7 +114,8 @@ final class TranscodeSettingsTests: XCTestCase {
                 bitsPerComponent: isHDR ? 10 : 8,
                 masteringDisplayColorVolume: nil,
                 contentLightLevelInfo: nil
-            )
+            ),
+            metadata: []
         )
     }
 }

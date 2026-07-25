@@ -260,6 +260,7 @@ enum VideoTranscoder {
         )
         videoWriterInput.expectsMediaDataInRealTime = false
         videoWriterInput.transform = try await videoTrack.load(.preferredTransform)
+        videoWriterInput.mediaTimeScale = try await videoTrack.load(.naturalTimeScale)
         videoWriterInput.metadata = try await videoTrack.load(.metadata)
         guard writer.canAdd(videoWriterInput) else {
             throw TranscodeError.writerFailed("无法添加压缩视频轨道。")
@@ -291,6 +292,7 @@ enum VideoTranscoder {
                 sourceFormatHint: formatHint
             )
             writerInput.expectsMediaDataInRealTime = false
+            writerInput.mediaTimeScale = try await track.load(.naturalTimeScale)
             writerInput.languageCode = try? await track.load(.languageCode)
             writerInput.extendedLanguageTag = try? await track.load(.extendedLanguageTag)
             writerInput.metadata = try await track.load(.metadata)
@@ -701,11 +703,13 @@ enum VideoTranscoder {
         let durationPassed = abs(
             input.durationSeconds - output.durationSeconds
         ) <= frameTolerance
-        let nonVideoInput = inventory(input.nonVideoTracks)
-        let nonVideoOutput = inventory(output.nonVideoTracks)
+        let nonVideoInput = trackInventory(input.nonVideoTracks)
+        let nonVideoOutput = trackInventory(output.nonVideoTracks)
         let inputMetadata = Set(input.metadata)
         let outputMetadata = Set(output.metadata)
         let missingMetadata = inputMetadata.subtracting(outputMetadata)
+        let missingVideoMetadata = Set(inputVideo.metadata)
+            .subtracting(Set(outputVideo.metadata))
 
         return [
             PreservationCheck(
@@ -757,6 +761,23 @@ enum VideoTranscoder {
                 detail: "允许不超过一帧或 50 ms 的封装舍入误差。"
             ),
             PreservationCheck(
+                name: "视频帧率与轨道时间",
+                passed: abs(
+                    inputVideo.nominalFrameRate - outputVideo.nominalFrameRate
+                ) <= 0.01
+                    && abs(
+                        inputVideo.timeRangeStartSeconds
+                            - outputVideo.timeRangeStartSeconds
+                    ) <= frameTolerance
+                    && abs(
+                        inputVideo.timeRangeDurationSeconds
+                            - outputVideo.timeRangeDurationSeconds
+                    ) <= frameTolerance,
+                inputValue: trackTiming(inputVideo),
+                outputValue: trackTiming(outputVideo),
+                detail: "重新读取视频轨道的帧率、起点和轨道时长。"
+            ),
+            PreservationCheck(
                 name: "色彩与 HDR 描述",
                 passed: colorPreserved(
                     input: inputVideo.color,
@@ -767,11 +788,24 @@ enum VideoTranscoder {
                 detail: "色域、传递函数、矩阵、位深和 HDR 静态元数据逐项一致。"
             ),
             PreservationCheck(
-                name: "非视频轨道直通",
-                passed: nonVideoInput == nonVideoOutput,
+                name: "视频轨道元数据",
+                passed: missingVideoMetadata.isEmpty,
+                inputValue: "\(inputVideo.metadata.count) 项",
+                outputValue: "\(outputVideo.metadata.count) 项",
+                detail: missingVideoMetadata.isEmpty
+                    ? "输入视频轨道元数据均可在输出中重新读取。"
+                    : "缺少 \(missingVideoMetadata.count) 项视频轨道元数据。"
+            ),
+            PreservationCheck(
+                name: "非视频轨道无损直通",
+                passed: nonVideoTracksPreserved(
+                    input: input.nonVideoTracks,
+                    output: output.nonVideoTracks,
+                    tolerance: frameTolerance
+                ),
                 inputValue: nonVideoInput.description,
                 outputValue: nonVideoOutput.description,
-                detail: "音频、字幕、隐藏字幕、时间码和定时元数据按压缩样本直通。"
+                detail: "压缩格式、时间范围、时间刻度、语言和轨道元数据逐项复核。"
             ),
             PreservationCheck(
                 name: "容器元数据",
@@ -790,10 +824,18 @@ enum VideoTranscoder {
                 outputValue: output.creationDate ?? "unknown",
                 detail: "输出文件尽力继承源文件创建时间。"
             ),
+            PreservationCheck(
+                name: "文件修改时间",
+                passed: input.modificationDate == nil
+                    || input.modificationDate == output.modificationDate,
+                inputValue: input.modificationDate ?? "unknown",
+                outputValue: output.modificationDate ?? "unknown",
+                detail: "输出文件尽力继承源文件修改时间。"
+            ),
         ]
     }
 
-    private static func inventory(
+    private static func trackInventory(
         _ tracks: [MediaTrackSummary]
     ) -> [String: Int] {
         Dictionary(
@@ -801,6 +843,52 @@ enum VideoTranscoder {
             by: { "\($0.mediaType)|\($0.codecFourCC)" }
         )
         .mapValues(\.count)
+    }
+
+    private static func nonVideoTracksPreserved(
+        input: [MediaTrackSummary],
+        output: [MediaTrackSummary],
+        tolerance: Double
+    ) -> Bool {
+        guard input.count == output.count else {
+            return false
+        }
+
+        var unmatched = output
+        for inputTrack in input {
+            guard let match = unmatched.firstIndex(where: { outputTrack in
+                inputTrack.mediaType == outputTrack.mediaType
+                    && inputTrack.codecType == outputTrack.codecType
+                    && inputTrack.languageCode == outputTrack.languageCode
+                    && inputTrack.extendedLanguageTag
+                        == outputTrack.extendedLanguageTag
+                    && inputTrack.naturalTimeScale
+                        == outputTrack.naturalTimeScale
+                    && abs(
+                        inputTrack.timeRangeStartSeconds
+                            - outputTrack.timeRangeStartSeconds
+                    ) <= tolerance
+                    && abs(
+                        inputTrack.timeRangeDurationSeconds
+                            - outputTrack.timeRangeDurationSeconds
+                    ) <= tolerance
+                    && Set(inputTrack.metadata)
+                        .isSubset(of: Set(outputTrack.metadata))
+            }) else {
+                return false
+            }
+            unmatched.remove(at: match)
+        }
+        return unmatched.isEmpty
+    }
+
+    private static func trackTiming(_ track: MediaTrackSummary) -> String {
+        String(
+            format: "%.3f fps · %.6f…%.6f s",
+            track.nominalFrameRate,
+            track.timeRangeStartSeconds,
+            track.timeRangeStartSeconds + track.timeRangeDurationSeconds
+        )
     }
 
     private static func dimensions(_ track: MediaTrackSummary) -> String {

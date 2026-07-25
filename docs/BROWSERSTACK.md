@@ -30,4 +30,4 @@ BrowserStack 已完成 M1、M2 的日常功能回归和硬件能力筛查。AWS 
 
 ## 结果口径
 
-云真机测试通过只能证明本次 BrowserStack 设备、系统和构建组合通过。结果必须与 Artifact 中的 `selected-device.json`、`build-final.json`、`capability-summary.json` 和 `sustained-encoding-summary.json` 一起解释，不能外推为所有 iPhone 均支持。设备池可能在不同运行中分配 iOS 26.0 或 26.2；目标 iPhone 17 Pro / iOS 26.5.2 仍承担阶段性最终验收。
+云真机测试通过只能证明本次 BrowserStack 设备、系统和构建组合通过。结果必须与 Artifact 中的 `selected-device.json`、`build-final.json`、`capability-summary.json`、`sustained-encoding-summary.json` 和 `transcode-summary.json` 一起解释，不能外推为所有 iPhone 均支持。设备池可能在不同运行中分配 iOS 26.0 或 26.2；目标 iPhone 17 Pro / iOS 26.5.2 仍承担阶段性最终验收。

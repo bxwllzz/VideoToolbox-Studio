@@ -194,6 +194,10 @@ final class CapabilityProbeCloudUITests: XCTestCase {
                 && summary.label.contains("保真核验通过"),
             "真实转码或输出复核没有通过：\(summary.label)"
         )
+        XCTAssertTrue(
+            metrics.label.contains("300 帧"),
+            "10 秒 30 fps 素材没有完整输出 300 帧：\(metrics.label)"
+        )
 
         let report: [String: String] = [
             "schema_version": "1.0",
