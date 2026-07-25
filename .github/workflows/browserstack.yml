@@ -2,6 +2,16 @@ name: BrowserStack 真机回归
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/browserstack.yml"
+      - "VideoToolboxStudio/**"
+      - "VideoToolboxStudioCloudTests/**"
+      - "project.yml"
+      - "scripts/run-browserstack-xcuitest.sh"
+      - "scripts/install-xcodegen.sh"
 
 permissions:
   contents: read
@@ -17,6 +27,9 @@ env:
 jobs:
   cloud-device-test:
     name: iOS 26 真机编码回归
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.head_ref, 'agent/transcode-')
     runs-on: macos-26
     timeout-minutes: 40
 

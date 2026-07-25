@@ -26,6 +26,8 @@ on:
 permissions:
   contents: read
   id-token: write
+  statuses: write
+  statuses: write
 
 concurrency:
   group: aws-devicefarm-${{ github.ref }}
@@ -117,6 +119,55 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: 记录 OIDC 信任声明
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          response="$(
+            curl \
+              --silent \
+              --show-error \
+              --fail-with-body \
+              --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com"
+          )"
+          oidc_token="$(jq -r '.value' <<<"${response}")"
+          export OIDC_TOKEN_FOR_CLAIMS="${oidc_token}"
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
+
+          token = os.environ["OIDC_TOKEN_FOR_CLAIMS"]
+          payload = token.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          allowed = {
+              key: claims.get(key)
+              for key in (
+                  "aud",
+                  "sub",
+                  "repository",
+                  "repository_owner",
+                  "ref",
+                  "sha",
+                  "workflow",
+                  "job",
+                  "environment",
+              )
+          }
+          output = Path("build/aws-devicefarm/logs/oidc-claims.json")
+          output.write_text(
+              json.dumps(allowed, ensure_ascii=False, indent=2, sort_keys=True)
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          unset OIDC_TOKEN_FOR_CLAIMS oidc_token response
+          jq '{aud, sub, repository, ref, workflow, job, environment}' \
+            build/aws-devicefarm/logs/oidc-claims.json
+
       - name: 通过 OIDC 获取 AWS 临时凭据
         if: github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@v6.2.3
@@ -156,3 +207,65 @@ jobs:
             build/aws-devicefarm/results
           if-no-files-found: warn
           retention-days: 14
+
+      - name: 发布 AWS 真机提交状态
+        if: ${{ always() && github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          case "${JOB_STATUS}" in
+            success)
+              state="success"
+              description="AWS Device Farm 真机回归通过"
+              ;;
+            failure)
+              state="failure"
+              description="AWS Device Farm 真机回归失败"
+              ;;
+            *)
+              state="error"
+              description="AWS Device Farm 真机回归未正常完成"
+              ;;
+          esac
+
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="${state}" \
+            -f context="AWS Device Farm 真机回归" \
+            -f description="${description}" \
+            -f target_url="${RUN_URL}"
+
+      - name: 发布 AWS 真机提交状态
+        if: ${{ always() && github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          case "${JOB_STATUS}" in
+            success)
+              state="success"
+              description="AWS Device Farm 真机回归通过"
+              ;;
+            failure)
+              state="failure"
+              description="AWS Device Farm 真机回归失败"
+              ;;
+            *)
+              state="error"
+              description="AWS Device Farm 真机回归未正常完成"
+              ;;
+          esac
+
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="${state}" \
+            -f context="AWS Device Farm 真机回归" \
+            -f description="${description}" \
+            -f target_url="${RUN_URL}"

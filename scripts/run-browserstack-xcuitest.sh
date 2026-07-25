@@ -241,6 +241,9 @@ extract_report \
 extract_report \
   "VT_CLOUD_SUSTAINED_REPORT_BASE64" \
   "${result_directory}/sustained-encoding-summary.json"
+extract_report \
+  "VT_CLOUD_TRANSCODE_REPORT_BASE64" \
+  "${result_directory}/transcode-summary.json"
 
 if [[ "${build_status}" != "passed" ]]; then
   echo "错误：BrowserStack 真机测试状态为 ${build_status:-未知}。" >&2
@@ -254,6 +257,11 @@ fi
 
 if [[ ! -s "${result_directory}/sustained-encoding-summary.json" ]]; then
   echo "错误：测试虽然通过，但未从日志回收到持续硬编摘要。" >&2
+  exit 1
+fi
+
+if [[ ! -s "${result_directory}/transcode-summary.json" ]]; then
+  echo "错误：测试虽然通过，但未从日志回收到真实转码摘要。" >&2
   exit 1
 fi
 
