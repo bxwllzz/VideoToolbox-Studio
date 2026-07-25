@@ -84,8 +84,8 @@ final class CapabilityProbeCloudUITests: XCTestCase {
 
             if runNumber < 3 {
                 let rerunButton = app.buttons["sustained-rerun-button"]
-                XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
                 makeHittable(rerunButton, in: app)
+                XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
                 rerunButton.tap()
 
                 let disappeared = XCTNSPredicateExpectation(
@@ -146,8 +146,8 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         )
 
         let rerunButton = app.buttons["sustained-rerun-button"]
-        XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
         makeHittable(rerunButton, in: app)
+        XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
         rerunButton.tap()
 
         let summary = app.staticTexts["sustained-summary"]
@@ -175,19 +175,21 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         openTranscode.tap()
 
         let runButton = app.buttons["cloud-transcode-run"]
+        makeHittable(runButton, in: app)
         XCTAssertTrue(
             runButton.waitForExistence(timeout: 30),
             "未找到云端真实转码入口。"
         )
-        makeHittable(runButton, in: app)
         runButton.tap()
 
         let summary = app.staticTexts["cloud-transcode-summary"]
+        makeHittable(summary, in: app)
         XCTAssertTrue(
             summary.waitForExistence(timeout: 300),
             "真实视频转码没有在 300 秒内完成。"
         )
         let metrics = app.staticTexts["cloud-transcode-metrics"]
+        makeHittable(metrics, in: app)
         XCTAssertTrue(metrics.waitForExistence(timeout: 30))
         XCTAssertTrue(
             summary.label.contains("1/1")
