@@ -65,6 +65,7 @@ struct HomeView: View {
                 } label: {
                     Label("运行只读探针", systemImage: "play.fill")
                 }
+                .accessibilityIdentifier("capability-run-button")
 
                 Text("探针不会读取照片或写入编码参数，通常数秒内完成。")
                     .font(.footnote)
@@ -79,7 +80,8 @@ struct HomeView: View {
                     ReportRow(title: "枚举到编码器", value: "\(capabilityReport.encoders.count)")
                     ReportRow(
                         title: "硬件会话通过",
-                        value: "\(capabilityReport.successfulHardwareSessionCount)/\(capabilityReport.configurationProbes.count)"
+                        value: "\(capabilityReport.successfulHardwareSessionCount)/\(capabilityReport.configurationProbes.count)",
+                        accessibilityIdentifier: "capability-summary"
                     )
 
                     ForEach(capabilityReport.configurationProbes) { probe in
@@ -110,6 +112,7 @@ struct HomeView: View {
                 } label: {
                     Label("重新运行", systemImage: "arrow.clockwise")
                 }
+                .accessibilityIdentifier("capability-rerun-button")
             case let .failed(message):
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
@@ -123,7 +126,12 @@ struct HomeView: View {
     private var buildSection: some View {
         Section("构建身份") {
             ReportRow(title: "版本", value: "\(report.appVersion) (\(report.buildNumber))")
-            ReportRow(title: "Commit", value: shortCommit(report.commitSHA), monospaced: true)
+            ReportRow(
+                title: "Commit",
+                value: shortCommit(report.commitSHA),
+                monospaced: true,
+                accessibilityIdentifier: "build-commit"
+            )
             ReportRow(title: "构建时间", value: report.builtAt, monospaced: true)
             ReportRow(title: "运行编号", value: report.buildRunID, monospaced: true)
         }
@@ -131,9 +139,18 @@ struct HomeView: View {
 
     private var deviceSection: some View {
         Section("目标设备") {
-            ReportRow(title: "设备标识", value: report.deviceIdentifier, monospaced: true)
+            ReportRow(
+                title: "设备标识",
+                value: report.deviceIdentifier,
+                monospaced: true,
+                accessibilityIdentifier: "device-identifier"
+            )
             ReportRow(title: "设备类型", value: report.deviceModel)
-            ReportRow(title: "系统", value: "\(report.systemName) \(report.systemVersion)")
+            ReportRow(
+                title: "系统",
+                value: "\(report.systemName) \(report.systemVersion)",
+                accessibilityIdentifier: "device-system"
+            )
         }
     }
 
@@ -200,6 +217,7 @@ private struct ReportRow: View {
     let title: String
     let value: String
     var monospaced = false
+    var accessibilityIdentifier: String?
 
     var body: some View {
         LabeledContent(title) {
@@ -208,6 +226,7 @@ private struct ReportRow: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
+                .accessibilityIdentifier(accessibilityIdentifier ?? "")
         }
     }
 }

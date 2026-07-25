@@ -1,0 +1,129 @@
+name: BrowserStack 真机回归
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/browserstack.yml"
+      - "VideoToolboxStudio/**"
+      - "VideoToolboxStudioCloudTests/**"
+      - "project.yml"
+      - "scripts/run-browserstack-xcuitest.sh"
+      - "scripts/install-xcodegen.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browserstack-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  XCODEGEN_VERSION: "2.46.0"
+
+jobs:
+  cloud-device-test:
+    name: iOS 26 真机探针
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.head_ref, 'agent/browserstack-')
+    runs-on: macos-26
+    timeout-minutes: 40
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7.0.1
+
+      - name: 验证 BrowserStack 密钥已配置
+        env:
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${BROWSERSTACK_USERNAME}" || -z "${BROWSERSTACK_ACCESS_KEY}" ]]; then
+            echo "错误：仓库缺少 BrowserStack Actions Secrets。" >&2
+            exit 1
+          fi
+          echo "两个 BrowserStack Secrets 均已注入，未读取或输出明文。"
+
+      - name: 安装固定版本 XcodeGen
+        run: scripts/install-xcodegen.sh
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate --spec project.yml
+
+      - name: 构建 App 与 XCUITest Runner
+        run: |
+          set -euo pipefail
+          mkdir -p build/browserstack/logs
+          xcodebuild \
+            -project VideoToolboxStudio.xcodeproj \
+            -scheme VideoToolboxStudioCloud \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "${PWD}/build/BrowserStackDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY="" \
+            BUILD_COMMIT_SHA="${GITHUB_SHA}" \
+            BUILD_TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            BUILD_RUN_ID="${GITHUB_RUN_ID}" \
+            BUILD_RUN_NUMBER="${GITHUB_RUN_NUMBER}" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            build-for-testing \
+            2>&1 | tee build/browserstack/logs/xcodebuild.log
+
+      - name: 打包 BrowserStack 上传对象
+        run: |
+          set -euo pipefail
+          readonly products="${PWD}/build/BrowserStackDerivedData/Build/Products/Debug-iphoneos"
+          readonly app_path="${products}/VideoToolboxStudio.app"
+          runner_path="$(find "${products}" -maxdepth 1 -type d -name 'VideoToolboxStudioCloudTests-Runner.app' -print -quit)"
+          readonly runner_path
+
+          if [[ ! -d "${app_path}" || -z "${runner_path}" ]]; then
+            echo "错误：未找到 App 或 XCUITest Runner。" >&2
+            find "${products}" -maxdepth 2 -print >&2
+            exit 1
+          fi
+
+          mkdir -p build/browserstack/package/Payload
+          ditto "${app_path}" build/browserstack/package/Payload/VideoToolboxStudio.app
+          (
+            cd build/browserstack/package
+            /usr/bin/zip -q -r VideoToolboxStudio.ipa Payload
+          )
+          (
+            cd "${products}"
+            /usr/bin/zip \
+              --symlinks \
+              -q \
+              -r \
+              "${GITHUB_WORKSPACE}/build/browserstack/package/VideoToolboxStudioCloudTests.zip" \
+              "$(basename "${runner_path}")"
+          )
+
+      - name: 运行 BrowserStack 真机测试
+        env:
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+        run: |
+          scripts/run-browserstack-xcuitest.sh \
+            build/browserstack/package/VideoToolboxStudio.ipa \
+            build/browserstack/package/VideoToolboxStudioCloudTests.zip \
+            build/browserstack/results
+
+      - name: 上传云真机证据
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: browserstack-${{ github.run_number }}-${{ github.sha }}
+          path: |
+            build/browserstack/logs
+            build/browserstack/results
+          if-no-files-found: warn
+          retention-days: 14
