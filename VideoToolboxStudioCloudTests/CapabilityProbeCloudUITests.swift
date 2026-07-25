@@ -123,6 +123,45 @@ final class CapabilityProbeCloudUITests: XCTestCase {
     }
 
     @MainActor
+    func test取消后可重新创建硬编会话() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let runButton = app.buttons["sustained-run-button"]
+        XCTAssertTrue(runButton.waitForExistence(timeout: 30))
+        makeHittable(runButton, in: app)
+        runButton.tap()
+
+        let cancelButton = app.buttons["sustained-cancel-button"]
+        XCTAssertTrue(
+            cancelButton.waitForExistence(timeout: 30),
+            "持续硬编运行时没有出现取消按钮。"
+        )
+        cancelButton.tap()
+
+        let cancelledStatus = app.descendants(matching: .any)["sustained-cancelled-status"]
+        XCTAssertTrue(
+            cancelledStatus.waitForExistence(timeout: 120),
+            "取消后没有完成编码会话收尾。"
+        )
+
+        let rerunButton = app.buttons["sustained-rerun-button"]
+        XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
+        makeHittable(rerunButton, in: app)
+        rerunButton.tap()
+
+        let summary = app.staticTexts["sustained-summary"]
+        XCTAssertTrue(
+            summary.waitForExistence(timeout: 240),
+            "取消后的新编码会话未能完成。"
+        )
+        XCTAssertTrue(
+            summary.label.contains("3/3"),
+            "取消后重新创建的编码会话未全部达标。"
+        )
+    }
+
+    @MainActor
     private func sustainedResult(
         in app: XCUIApplication,
         runNumber: Int

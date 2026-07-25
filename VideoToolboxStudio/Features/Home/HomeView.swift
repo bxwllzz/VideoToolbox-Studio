@@ -125,6 +125,7 @@ struct HomeView: View {
                 if sustainedEncodingStore.phase == .cancelled {
                     Label("测试已取消，已安全收尾当前编码会话。", systemImage: "stop.circle")
                         .foregroundStyle(.orange)
+                        .accessibilityIdentifier("sustained-cancelled-status")
                 }
 
                 if let encodingURL = sustainedEncodingStore.exportURL {
