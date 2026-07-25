@@ -1,6 +1,6 @@
-# BrowserStack 云真机回归
+# BrowserStack 备用云真机回归
 
-BrowserStack 只承担日常功能回归和硬件能力筛查，不能替代目标设备 iPhone 17 Pro / iOS 26.5.2 的最终性能、热状态与 HDR 验收。
+BrowserStack 已完成 M1、M2 的日常功能回归和硬件能力筛查。AWS Device Farm 接入后，本工作流仅作为手动备用通道，不能替代目标设备 iPhone 17 Pro / iOS 26.5.2 的最终性能、热状态与 HDR 验收。
 
 ## 凭据
 
@@ -24,9 +24,9 @@ BrowserStack 只承担日常功能回归和硬件能力筛查，不能替代目�
 
 ## 触发规则
 
-- 日常按需从 Actions 页面手动触发 `BrowserStack 真机回归`；
-- `agent/browserstack-*` 分支向 `main` 提交 PR 时自动执行一次，用于验证云测试链路本身；
-- 其他 PR 不自动消耗 BrowserStack 真机分钟。
+- 仅从 Actions 页面手动触发 `BrowserStack 真机回归`；
+- PR 和 `main` 推送均不自动消耗 BrowserStack 真机分钟；
+- AWS Device Farm 暂时不可用或需要跨供应商复核时再手动执行。
 
 ## 结果口径
 

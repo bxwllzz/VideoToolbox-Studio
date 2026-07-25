@@ -14,9 +14,9 @@
 - Bundle ID：`io.github.bxwllzz.VideoToolboxStudio`；
 - M0 状态：已通过。真机安装标识 `CE79063C` 在覆盖更新后保持不变，启动次数从 2 增至 4；
 - M1 状态：目标 iPhone 已证明 H.264 1080p、HEVC 1080p、HEVC 4K 的严格硬件会话可创建，且运行时硬件标记为真；
-- 云真机状态：BrowserStack 已在 iPhone 17 Pro / iOS 26.2 完成 3/3 严格硬件会话回归，并自动回收报告；
+- 云真机状态：BrowserStack 已在 iPhone 17 Pro / iOS 26.2 完成 M1、M2 回归；正在将默认日常通道切换为 AWS Device Farm；
 - M2 状态：BrowserStack iPhone 17 Pro 连续三轮完成 60/60 帧编码，三种配置均取得 E2、E4、E5、E6；取消后可重新创建会话；
-- 当前唯一主任务：开始 M3 真实视频转码纵切。
+- 当前唯一主任务：完成 AWS Device Farm 首次全链路验收，随后开始 M3 真实视频转码纵切。
 
 ---
 
@@ -28,7 +28,7 @@
 | 能力边界 | 只描述当前设备通过 Apple 公共 API 暴露的能力，不宣称覆盖芯片全部硬件能力 |
 | 开发终端 | 用户主要通过 iPhone 上的 ChatGPT Work 发起、审查和推进开发 |
 | 云端构建 | GitHub Actions（GitHub 自动化工作流）的 macOS runner 负责编译、测试和生成未签名 IPA（iOS App Store Package，iOS 应用安装包） |
-| 云真机回归 | BrowserStack 自动重签未签名 IPA 与 XCUITest Runner，负责日常功能回归；目标 iPhone 负责阶段性最终验收 |
+| 云真机回归 | AWS Device Farm 通过 OIDC 自动执行日常回归；BrowserStack 保留为手动备用；目标 iPhone 负责阶段性最终验收 |
 | 免费安装 | 接受使用电脑一次性初始化 SideStore；此后由 iPhone 下载 IPA 并用 SideStore 签名、安装和续签 |
 | 付费时机 | 在真机探针、真实转码和竞品对比证明产品价值后，再购买 Apple Developer Program（苹果开发者计划） |
 | 隐私 | 不联网、无账号、无广告、无分析埋点，视频与诊断数据默认只在本机处理 |
