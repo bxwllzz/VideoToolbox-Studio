@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @ObservedObject var installationState: InstallationState
 
+    @StateObject private var capabilityStore = CapabilityProbeStore()
     @State private var exportURL: URL?
     @State private var exportError: String?
 
@@ -17,6 +18,7 @@ struct HomeView: View {
         NavigationStack {
             List {
                 statusSection
+                capabilitySection
                 buildSection
                 deviceSection
                 persistenceSection
@@ -33,11 +35,13 @@ struct HomeView: View {
     private var statusSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
-                Label("安装闭环验证版", systemImage: "checkmark.seal.fill")
+                Label("只读能力探针", systemImage: "waveform.path.ecg.rectangle")
                     .font(.title2.bold())
                     .foregroundStyle(.tint)
 
-                Text("当前版本只验证 GitHub 云端构建、SideStore 安装、覆盖更新与报告回传，不包含视频编码功能。")
+                Text(
+                    "枚举系统编码器，针对 H.264 1080p、HEVC 1080p 和 HEVC 4K 创建严格硬件会话，并导出原始属性。"
+                )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -48,6 +52,71 @@ struct HomeView: View {
                 }
             }
             .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var capabilitySection: some View {
+        Section("VideoToolbox 能力") {
+            switch capabilityStore.phase {
+            case .idle:
+                Button {
+                    capabilityStore.run(buildReport: report)
+                } label: {
+                    Label("运行只读探针", systemImage: "play.fill")
+                }
+
+                Text("探针不会读取照片或写入编码参数，通常数秒内完成。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            case .running:
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("正在查询编码器和硬件会话…")
+                }
+            case .completed:
+                if let capabilityReport = capabilityStore.report {
+                    ReportRow(title: "枚举到编码器", value: "\(capabilityReport.encoders.count)")
+                    ReportRow(
+                        title: "硬件会话通过",
+                        value: "\(capabilityReport.successfulHardwareSessionCount)/\(capabilityReport.configurationProbes.count)"
+                    )
+
+                    ForEach(capabilityReport.configurationProbes) { probe in
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(probe.configuration.label)
+                                Spacer()
+                                Image(systemName: probe.usesHardwareEncoder == true
+                                    ? "checkmark.circle.fill"
+                                    : "xmark.circle.fill")
+                                    .foregroundStyle(probe.usesHardwareEncoder == true ? .green : .red)
+                            }
+                            Text(probe.evidenceSummary.isEmpty ? "无有效证据" : probe.evidenceSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if let capabilityURL = capabilityStore.exportURL {
+                    ShareLink(item: capabilityURL) {
+                        Label("导出 capability-report.json", systemImage: "square.and.arrow.up")
+                    }
+                }
+
+                Button {
+                    capabilityStore.run(buildReport: report)
+                } label: {
+                    Label("重新运行", systemImage: "arrow.clockwise")
+                }
+            case let .failed(message):
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Button("重试") {
+                    capabilityStore.run(buildReport: report)
+                }
+            }
         }
     }
 

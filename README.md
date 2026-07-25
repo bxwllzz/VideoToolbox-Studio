@@ -2,7 +2,9 @@
 
 纯本地、无广告、无账号、参数透明的 iPhone 专业视频编码与能力验证工具。
 
-当前只实施 **M0/P1 安装闭环**：验证 GitHub Actions 云端构建、SideStore 安装、覆盖更新和 `build-info.json` 回传。尚未实现 VideoToolbox 编码或能力探针。
+**M0 安装闭环已通过**：同一 Bundle ID 的两个版本已在 iPhone 17 Pro / iOS 26.5.2 上通过 SideStore 安装和覆盖更新，安装标识保持不变。
+
+当前实施 **M1 只读能力探针**：枚举 VideoToolbox 编码器，针对 H.264 1080p、HEVC 1080p 和 HEVC 4K 查询预检属性、创建严格硬件会话、读取会话属性和运行时硬件标记，并导出 `capability-report.json`。本阶段不读取用户媒体，也不写入编码属性。
 
 ## 当前目标
 
@@ -42,4 +44,4 @@ project.yml               XcodeGen 工程定义
 
 ## 开发顺序
 
-当前的完整范围、阶段门和证据要求见 [项目 Handoff](docs/HANDOFF.md) 与 [开发路线图](docs/ROADMAP.md)。M0/P1 未通过前，不进入 VideoToolbox 功能开发。
+当前的完整范围、阶段门和证据要求见 [项目 Handoff](docs/HANDOFF.md) 与 [开发路线图](docs/ROADMAP.md)。取得首份真机能力报告后，再根据设备实测结果进入多帧编码和真实视频纵切。

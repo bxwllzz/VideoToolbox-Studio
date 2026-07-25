@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-struct BuildReport: Codable, Equatable {
+struct BuildReport: Codable, Equatable, Sendable {
     let schemaVersion: String
     let appName: String
     let appVersion: String

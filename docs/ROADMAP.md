@@ -1,9 +1,9 @@
 # VideoToolbox Studio 开发路线图
 
-> 文档状态：v1.0
-> 更新日期：2026-07-25
-> 当前阶段：免费账号技术与产品价值验证
-> 目标设备：用户当前主力 iPhone，iOS 26 系列优先
+> 文档状态：v1.1
+> 更新日期：2026-07-26
+> 当前阶段：M1 只读能力探针
+> 目标设备：iPhone 17 Pro / iOS 26.5.2
 > 项目定位：通过 Apple 公共 API 动态探测真实可用的视频编码能力，并提供纯本地、无广告、参数透明的专业转码工具
 
 当前执行信息：
@@ -12,7 +12,8 @@
 - 目标系统：iOS 26.5.2；
 - App 显示名称：`VideoToolbox Studio`；
 - Bundle ID：`io.github.bxwllzz.VideoToolboxStudio`；
-- 当前唯一主任务：完成 M0/P1 空壳 App 的构建、安装、更新与报告回传闭环。
+- M0 状态：已通过。真机安装标识 `CE79063C` 在覆盖更新后保持不变，启动次数从 2 增至 4；
+- 当前唯一主任务：完成 M1 只读能力探针并取得首份真机 `capability-report.json`。
 
 ---
 
@@ -121,12 +122,12 @@ SideStore 重签、安装或更新
 
 #### 验收
 
-- [ ] 两次独立 commit 均能在 runner 上成功构建；
-- [ ] 两个 IPA 均可在同一台 iPhone 上通过 SideStore 安装或覆盖更新；
-- [ ] Bundle ID（Bundle Identifier，应用包标识符）保持不变，更新后 App 数据不丢失；
-- [ ] App 显示的 commit 与 GitHub 构建一致；
-- [ ] 用户可从 iPhone 导出并上传 JSON；
-- [ ] GitHub 中不保存 Apple Account、密码、证书或配对文件。
+- [x] 两次独立 commit 均能在 runner 上成功构建；
+- [x] 两个 IPA 均可在同一台 iPhone 上通过 SideStore 安装或覆盖更新；
+- [x] Bundle ID（Bundle Identifier，应用包标识符）保持不变，更新后 App 数据不丢失；
+- [x] App 显示的 commit 与 GitHub 构建一致；
+- [x] 用户可从 iPhone 导出并上传 JSON；
+- [x] GitHub 中不保存 Apple Account、密码、证书或配对文件。
 
 #### 停止条件
 
@@ -368,7 +369,7 @@ HDR 为 High Dynamic Range（高动态范围）。
 
 ## 8. 当前任务队列
 
-### P0：现在执行
+### P0：已完成
 
 1. 创建 GitHub 私有仓库；
 2. 将原 handoff 和本路线图放入 `docs/`；
@@ -376,7 +377,7 @@ HDR 为 High Dynamic Range（高动态范围）。
 4. 实施 M0，先交付可安装的空壳 App；
 5. 在 iPhone 上完成两次独立版本安装验证。
 
-### P1：M0 通过后
+### P1：现在执行
 
 1. 实施 M1 只读探针；
 2. 导出第一份真机能力报告；
@@ -393,18 +394,18 @@ HDR 为 High Dynamic Range（高动态范围）。
 ## 9. 下一次开发会话的启动指令
 
 ```text
-阅读 docs/ROADMAP.md 和 docs/VideoToolbox_专业视频编码App_项目Handoff.md。
+阅读 docs/ROADMAP.md 和 docs/HANDOFF.md。
 
-当前只执行 M0，不实现 VideoToolbox 探针。
+M0 已通过，当前只执行 M1 只读能力探针，不读取用户媒体，不写入编码属性。
 
 交付：
-1. 原生 SwiftUI 空壳 App；
-2. 稳定的 Bundle ID；
-3. 页面显示 App 版本、构建号、commit、设备标识和 iOS 版本；
-4. 导出最小 JSON 构建报告；
-5. XcodeGen 工程；
-6. GitHub Actions 在 macOS runner 上完成编译、单元测试、未签名 IPA 打包；
-7. README 写清 iPhone 下载 Artifact、解压 IPA、导入 SideStore、安装和回传报告的步骤。
+1. `VTCopyVideoEncoderList` 编码器清单及原始字典；
+2. H.264 1080p、HEVC 1080p、HEVC 4K 的会话前预检；
+3. 严格要求硬件的 `VTCompressionSession`；
+4. 实际会话支持属性与硬件运行时标记；
+5. 分级显示 E1、E2、E3、E5，不把缺失的 E4 伪装为通过；
+6. 导出版本化 `capability-report.json`；
+7. GitHub Actions 编译、单元测试和无签名 IPA。
 
 约束：
 - 不使用 FFmpeg；
@@ -416,7 +417,7 @@ HDR 为 High Dynamic Range（高动态范围）。
 - 每个阶段提交独立 commit；
 - CI 通过后再交付 IPA。
 
-M0 验收前，不进入编码器枚举和属性探测。
+首份真机报告回传前，不进入 M2 多帧编码和 M3 真实视频纵切。
 ```
 
 ---
