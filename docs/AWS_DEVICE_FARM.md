@@ -25,6 +25,7 @@ GitHub Actions 使用 OIDC（OpenID Connect，开放式身份连接）换取短�
 7. 回收 Run、Job、文件、日志和截图，删除 Artifact 元数据中的临时下载 URL；
 8. 从 XCTest 日志提取 `capability-summary.json` 与 `sustained-encoding-summary.json`；
 9. 只有 Run 结果为 `PASSED` 且两个摘要都成功回收，工作流才判定通过。
+10. 无论终态如何，都向当前 commit 写入 `AWS Device Farm 真机回归` 提交状态及对应 Run 链接。
 
 ## 触发规则
 
