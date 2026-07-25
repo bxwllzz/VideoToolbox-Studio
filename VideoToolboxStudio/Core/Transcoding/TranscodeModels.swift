@@ -24,12 +24,12 @@ enum TranscodeTargetCodec: String, Codable, CaseIterable, Identifiable, Sendable
     func resolvedCodecType(isHDR: Bool) throws -> CMVideoCodecType {
         switch self {
         case .automatic, .hevc:
-            kCMVideoCodecType_HEVC
+            return kCMVideoCodecType_HEVC
         case .h264:
             guard !isHDR else {
                 throw TranscodeError.hdrRequiresHEVC
             }
-            kCMVideoCodecType_H264
+            return kCMVideoCodecType_H264
         }
     }
 }
