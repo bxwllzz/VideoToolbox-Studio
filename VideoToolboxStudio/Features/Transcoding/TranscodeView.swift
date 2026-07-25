@@ -315,6 +315,20 @@ struct TranscodeView: View {
             .disabled(store.isRunning)
             .accessibilityIdentifier("cloud-transcode-run")
 
+            if let firstJob = store.jobs.first {
+                switch firstJob.state {
+                case .running(let progress):
+                    Text("真实转码进度 \(Int(progress * 100))%")
+                        .accessibilityIdentifier("cloud-transcode-progress")
+                case .failed(let message):
+                    Text(message)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("cloud-transcode-error")
+                case .queued, .completed, .cancelled:
+                    EmptyView()
+                }
+            }
+
             if store.completedCount == 1,
                let result = store.jobs.first?.result
             {
