@@ -46,7 +46,7 @@ jobs:
           BUILD_TIMESTAMP: ${{ steps.identity.outputs.build_timestamp }}
         run: |
           set -euo pipefail
-          mkdir -p build/logs build/device
+          mkdir -p build/logs
           xcodebuild \
             -project VideoToolboxStudio.xcodeproj \
             -scheme VideoToolboxStudio \
