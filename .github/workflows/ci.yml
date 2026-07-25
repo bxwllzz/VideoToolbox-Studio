@@ -80,3 +80,68 @@ jobs:
             build/TestResults.xcresult
           if-no-files-found: warn
           retention-days: 14
+
+  package-validation:
+    name: 临时真机打包
+    if: github.event_name == 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7.0.1
+
+      - name: 安装固定版本 XcodeGen
+        run: scripts/install-xcodegen.sh
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate --spec project.yml
+
+      - name: 编译正式 M1 真机版本
+        env:
+          FORMAL_COMMIT_SHA: f841807b65f3e9123ec8d87c09a6cf67fc998576
+        run: |
+          set -euo pipefail
+          build_timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          mkdir -p build/logs
+          xcodebuild \
+            -project VideoToolboxStudio.xcodeproj \
+            -scheme VideoToolboxStudio \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build/DerivedData \
+            CONFIGURATION_BUILD_DIR="${PWD}/build/device" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY="" \
+            BUILD_COMMIT_SHA="${FORMAL_COMMIT_SHA}" \
+            BUILD_TIMESTAMP="${build_timestamp}" \
+            BUILD_RUN_ID="${GITHUB_RUN_ID}" \
+            BUILD_RUN_NUMBER="${GITHUB_RUN_NUMBER}" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            clean build \
+            2>&1 | tee build/logs/device-build.log
+          echo "BUILD_TIMESTAMP=${build_timestamp}" >> "${GITHUB_ENV}"
+
+      - name: 生成 IPA
+        env:
+          BUILD_COMMIT_SHA: f841807b65f3e9123ec8d87c09a6cf67fc998576
+          BUILD_RUN_ID: ${{ github.run_id }}
+          BUILD_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          scripts/create-build-info.sh build/manifest/build-info.json
+          scripts/package-unsigned-ipa.sh \
+            build/device/VideoToolboxStudio.app \
+            build/manifest/build-info.json \
+            "${PWD}/build/artifact"
+          cp build/logs/device-build.log build/artifact/device-build.log
+
+      - name: 上传 M1 安装包
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: VideoToolboxStudio-M1-f841807b65f3
+          path: build/artifact
+          if-no-files-found: error
+          retention-days: 14
