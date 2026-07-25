@@ -72,7 +72,9 @@ enum EvidenceLevel: String, Encodable, Sendable {
     case preflight = "E1"
     case sessionCreated = "E2"
     case sessionPropertiesRead = "E3"
+    case bitstreamProduced = "E4"
     case hardwareRuntimeProperty = "E5"
+    case sustainedThroughput = "E6"
 }
 
 struct EncoderConfigurationProbe: Encodable, Identifiable, Sendable {
