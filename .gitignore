@@ -25,3 +25,6 @@ Payload/
 
 # Work 模式会话上传区，不属于工程源码
 /upload/
+
+# BrowserStack 本地结果
+browserstack-results/

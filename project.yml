@@ -60,6 +60,19 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/VideoToolboxStudio.app/VideoToolboxStudio"
         BUNDLE_LOADER: "$(TEST_HOST)"
 
+  VideoToolboxStudioCloudTests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: VideoToolboxStudioCloudTests
+    dependencies:
+      - target: VideoToolboxStudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.bxwllzz.VideoToolboxStudioCloudTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: VideoToolboxStudio
+
 schemes:
   VideoToolboxStudio:
     build:
@@ -69,4 +82,15 @@ schemes:
       gatherCoverageData: true
       targets:
         - name: VideoToolboxStudioTests
+          parallelizable: false
+
+  VideoToolboxStudioCloud:
+    build:
+      targets:
+        VideoToolboxStudio: all
+        VideoToolboxStudioCloudTests:
+          - test
+    test:
+      targets:
+        - name: VideoToolboxStudioCloudTests
           parallelizable: false

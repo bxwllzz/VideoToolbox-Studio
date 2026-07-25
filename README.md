@@ -4,7 +4,7 @@
 
 **M0 安装闭环已通过**：同一 Bundle ID 的两个版本已在 iPhone 17 Pro / iOS 26.5.2 上通过 SideStore 安装和覆盖更新，安装标识保持不变。
 
-当前实施 **M1 只读能力探针**：枚举 VideoToolbox 编码器，针对 H.264 1080p、HEVC 1080p 和 HEVC 4K 查询预检属性、创建严格硬件会话、读取会话属性和运行时硬件标记，并导出 `capability-report.json`。本阶段不读取用户媒体，也不写入编码属性。
+**M1 只读能力探针已在目标 iPhone 通过**：H.264 1080p、HEVC 1080p 和 HEVC 4K 均取得 E1、E2、E3、E5 证据。当前接入 BrowserStack 云真机回归，用 XCUITest 自动触发探针、断言结果并把紧凑 JSON 与日志回收到 GitHub Artifact；完成后进入 M2 多帧持续硬编验证。
 
 ## 当前目标
 
@@ -33,8 +33,10 @@ project.yml               XcodeGen 工程定义
 
 - `持续集成`：生成 Xcode 工程，在 iPhone 17 Pro / iOS 26.5 模拟器上编译和运行单元测试；
 - `构建无签名 IPA`：为真机编译无签名 App，输出 IPA、构建信息、日志和 SHA-256 校验值。
+- `BrowserStack 真机回归`：按需构建 App 与 XCUITest Runner，在 iOS 26 真机运行只读探针并自动回收证据。
 
 完整手机端安装步骤见 [SideStore 安装说明](docs/SIDESTORE_INSTALL.md)。
+云真机的凭据边界、触发规则与结果口径见 [BrowserStack 云真机回归](docs/BROWSERSTACK.md)。
 
 ## Apple Account 边界
 
