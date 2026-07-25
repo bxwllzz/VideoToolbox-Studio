@@ -1,0 +1,158 @@
+name: AWS Device Farm 真机回归
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/aws-devicefarm.yml"
+      - "VideoToolboxStudio/**"
+      - "VideoToolboxStudioCloudTests/**"
+      - "project.yml"
+      - "scripts/run-aws-devicefarm-xcuitest.sh"
+      - "scripts/install-xcodegen.sh"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/aws-devicefarm.yml"
+      - "VideoToolboxStudio/**"
+      - "VideoToolboxStudioCloudTests/**"
+      - "project.yml"
+      - "scripts/run-aws-devicefarm-xcuitest.sh"
+      - "scripts/install-xcodegen.sh"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-devicefarm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  XCODEGEN_VERSION: "2.46.0"
+  AWS_REGION: us-west-2
+  AWS_DEVICE_FARM_PROJECT_ARN: arn:aws:devicefarm:us-west-2:247332612374:project:36ab8700-d09f-42fa-ad15-65df8d06958b
+  AWS_DEVICE_FARM_ROLE_ARN: arn:aws:iam::247332612374:role/bxwllzz@github
+  AWS_DEVICE_FARM_MIN_IOS_MAJOR: "26"
+
+jobs:
+  cloud-device-test:
+    name: 构建并执行 iOS 真机编码回归
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7.0.1
+
+      - name: 安装固定版本 XcodeGen
+        run: scripts/install-xcodegen.sh
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate --spec project.yml
+
+      - name: 构建 App 与 XCUITest Runner
+        run: |
+          set -euo pipefail
+          mkdir -p build/aws-devicefarm/logs
+          xcodebuild \
+            -project VideoToolboxStudio.xcodeproj \
+            -scheme VideoToolboxStudioCloud \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "${PWD}/build/AWSDeviceFarmDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY="" \
+            BUILD_COMMIT_SHA="${GITHUB_SHA}" \
+            BUILD_TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            BUILD_RUN_ID="${GITHUB_RUN_ID}" \
+            BUILD_RUN_NUMBER="${GITHUB_RUN_NUMBER}" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            build-for-testing \
+            2>&1 | tee build/aws-devicefarm/logs/xcodebuild.log
+
+      - name: 打包 Device Farm 上传对象
+        run: |
+          set -euo pipefail
+          readonly products="${PWD}/build/AWSDeviceFarmDerivedData/Build/Products/Debug-iphoneos"
+          readonly app_path="${products}/VideoToolboxStudio.app"
+          runner_path="$(find "${products}" -maxdepth 1 -type d -name 'VideoToolboxStudioCloudTests-Runner.app' -print -quit)"
+          readonly runner_path
+
+          if [[ ! -d "${app_path}" || -z "${runner_path}" ]]; then
+            echo "错误：未找到 App 或 XCUITest Runner。" >&2
+            find "${products}" -maxdepth 2 -print >&2
+            exit 1
+          fi
+
+          mkdir -p build/aws-devicefarm/package/Payload
+          ditto "${app_path}" build/aws-devicefarm/package/Payload/VideoToolboxStudio.app
+          (
+            cd build/aws-devicefarm/package
+            /usr/bin/zip -q -r VideoToolboxStudio.ipa Payload
+          )
+          (
+            cd "${products}"
+            /usr/bin/zip \
+              --symlinks \
+              -q \
+              -r \
+              "${GITHUB_WORKSPACE}/build/aws-devicefarm/package/VideoToolboxStudioCloudTests.zip" \
+              "$(basename "${runner_path}")"
+          )
+
+      - name: 上传待验证测试包
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: aws-devicefarm-package-${{ github.run_number }}-${{ github.sha }}
+          path: |
+            build/aws-devicefarm/package
+            build/aws-devicefarm/logs/xcodebuild.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 通过 OIDC 获取 AWS 临时凭据
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_DEVICE_FARM_ROLE_ARN }}
+          role-session-name: VideoToolboxStudio-${{ github.run_id }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: 验证 AWS 身份与项目权限
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity >/dev/null
+          aws devicefarm get-project \
+            --arn "${AWS_DEVICE_FARM_PROJECT_ARN}" \
+            --region "${AWS_REGION}" \
+            > build/aws-devicefarm/logs/project.json
+          echo "OIDC 临时身份与 Device Farm 项目读取权限均已验证。"
+
+      - name: 运行 AWS Device Farm 真机测试
+        if: github.event_name != 'pull_request'
+        run: |
+          bash scripts/run-aws-devicefarm-xcuitest.sh \
+            build/aws-devicefarm/package/VideoToolboxStudio.ipa \
+            build/aws-devicefarm/package/VideoToolboxStudioCloudTests.zip \
+            build/aws-devicefarm/results
+
+      - name: 上传 AWS 真机证据
+        if: ${{ always() && github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: aws-devicefarm-${{ github.run_number }}-${{ github.sha }}
+          path: |
+            build/aws-devicefarm/logs
+            build/aws-devicefarm/results
+          if-no-files-found: warn
+          retention-days: 14
