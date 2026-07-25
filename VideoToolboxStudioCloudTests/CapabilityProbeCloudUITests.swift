@@ -162,6 +162,61 @@ final class CapabilityProbeCloudUITests: XCTestCase {
     }
 
     @MainActor
+    func test真实视频转码与保真复核通过() throws {
+        let app = XCUIApplication()
+        app.launchArguments.append("--cloud-testing")
+        app.launch()
+
+        let openTranscode = app.buttons["open-transcode"]
+        XCTAssertTrue(
+            openTranscode.waitForExistence(timeout: 30),
+            "未找到视频转换入口。"
+        )
+        openTranscode.tap()
+
+        let runButton = app.buttons["cloud-transcode-run"]
+        XCTAssertTrue(
+            runButton.waitForExistence(timeout: 30),
+            "未找到云端真实转码入口。"
+        )
+        makeHittable(runButton, in: app)
+        runButton.tap()
+
+        let summary = app.staticTexts["cloud-transcode-summary"]
+        XCTAssertTrue(
+            summary.waitForExistence(timeout: 300),
+            "真实视频转码没有在 300 秒内完成。"
+        )
+        let metrics = app.staticTexts["cloud-transcode-metrics"]
+        XCTAssertTrue(metrics.waitForExistence(timeout: 30))
+        XCTAssertTrue(
+            summary.label.contains("1/1")
+                && summary.label.contains("保真核验通过"),
+            "真实转码或输出复核没有通过：\(summary.label)"
+        )
+
+        let report: [String: String] = [
+            "schema_version": "1.0",
+            "summary": summary.label,
+            "metrics": metrics.label,
+            "runner_device_model": UIDevice.current.model,
+            "runner_system_name": UIDevice.current.systemName,
+            "runner_system_version": UIDevice.current.systemVersion,
+            "generated_at": ISO8601DateFormatter().string(from: Date()),
+        ]
+        let reportData = try JSONSerialization.data(
+            withJSONObject: report,
+            options: [.sortedKeys]
+        )
+        print("VT_CLOUD_TRANSCODE_REPORT_BASE64=\(reportData.base64EncodedString())")
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "VideoToolbox 真实视频转码结果"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     private func sustainedResult(
         in app: XCUIApplication,
         runNumber: Int

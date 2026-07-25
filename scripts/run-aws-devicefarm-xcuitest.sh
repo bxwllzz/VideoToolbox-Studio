@@ -391,6 +391,9 @@ extract_report \
 extract_report \
   "VT_CLOUD_SUSTAINED_REPORT_BASE64" \
   "${result_directory}/sustained-encoding-summary.json"
+extract_report \
+  "VT_CLOUD_TRANSCODE_REPORT_BASE64" \
+  "${result_directory}/transcode-summary.json"
 
 jq -n \
   --arg run_arn "${run_arn}" \
@@ -442,6 +445,11 @@ fi
 
 if [[ ! -s "${result_directory}/sustained-encoding-summary.json" ]]; then
   echo "错误：测试通过，但未从 Device Farm 日志回收到持续硬编摘要。" >&2
+  exit 1
+fi
+
+if [[ ! -s "${result_directory}/transcode-summary.json" ]]; then
+  echo "错误：测试通过，但未从 Device Farm 日志回收到真实转码摘要。" >&2
   exit 1
 fi
 
