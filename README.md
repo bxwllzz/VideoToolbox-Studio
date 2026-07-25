@@ -6,7 +6,7 @@
 
 **M1 只读能力探针已通过**：H.264 1080p、HEVC 1080p 和 HEVC 4K 均取得 E1、E2、E3、E5 证据。BrowserStack 云真机通道已在 iPhone 17 Pro / iOS 26.2 实际跑通，自动触发 XCUITest、断言结果并回收 JSON、日志、截图和录像。
 
-**M2 持续硬编验证开发中**：固定运行 H.264 1080p30、HEVC 1080p30 和 HEVC 4K30 的 2 秒合成帧编码，报告 E4 码流、E5 硬件运行时证据与 E6 持续吞吐，以及帧数、延迟、丢帧、关键帧、积压和输出格式。
+**M2 持续硬编验证已通过**：BrowserStack iPhone 17 Pro 连续三轮运行 H.264 1080p30、HEVC 1080p30 和 HEVC 4K30 的 2 秒合成帧编码，全部 60/60 帧并达到 E6；取消后也能安全收尾并重新创建达标会话。
 
 ## 当前目标
 
@@ -48,4 +48,4 @@ project.yml               XcodeGen 工程定义
 
 ## 开发顺序
 
-当前的完整范围、阶段门和证据要求见 [项目 Handoff](docs/HANDOFF.md) 与 [开发路线图](docs/ROADMAP.md)。M2 通过后进入真实视频纵切。
+当前的完整范围、阶段门和证据要求见 [项目 Handoff](docs/HANDOFF.md) 与 [开发路线图](docs/ROADMAP.md)。下一阶段是 M3 真实视频纵切。
