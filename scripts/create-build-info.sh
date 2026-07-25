@@ -17,12 +17,28 @@ readonly image_os="${ImageOS:-unknown}"
 readonly image_version="${ImageVersion:-unknown}"
 readonly repository="${GITHUB_REPOSITORY:-local}"
 
+if [[ -n "${APP_INFO_PLIST:-}" ]]; then
+  if [[ ! -f "${APP_INFO_PLIST}" ]]; then
+    echo "错误：未找到 App Info.plist：${APP_INFO_PLIST}" >&2
+    exit 1
+  fi
+  app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP_INFO_PLIST}")"
+else
+  app_version="$(awk '/MARKETING_VERSION:/ {gsub(/"/, "", $2); print $2; exit}' project.yml)"
+fi
+
+if [[ -z "${app_version}" ]]; then
+  echo "错误：无法确定 App 版本" >&2
+  exit 1
+fi
+readonly app_version
+
 mkdir -p "$(dirname "${output_path}")"
 
 jq -n \
   --arg schema_version "1.0" \
   --arg app_name "VideoToolbox Studio" \
-  --arg app_version "1.0.0" \
+  --arg app_version "${app_version}" \
   --arg build_number "${run_number}" \
   --arg bundle_id "io.github.bxwllzz.VideoToolboxStudio" \
   --arg commit_sha "${commit_sha}" \
