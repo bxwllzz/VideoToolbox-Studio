@@ -115,6 +115,9 @@ struct HomeView: View {
                             )
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.secondary)
+                                .accessibilityIdentifier(
+                                    sustainedMetricsIdentifier(for: result.configuration.label)
+                                )
                         }
                     }
                 }
@@ -318,6 +321,19 @@ struct HomeView: View {
 
     private func formattedBytes(_ count: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(count), countStyle: .file)
+    }
+
+    private func sustainedMetricsIdentifier(for label: String) -> String {
+        switch label {
+        case "H.264 1080p30":
+            "sustained-h264-1080p-metrics"
+        case "HEVC 1080p30":
+            "sustained-hevc-1080p-metrics"
+        case "HEVC 4K30":
+            "sustained-hevc-4k-metrics"
+        default:
+            "sustained-unknown-metrics"
+        }
     }
 }
 

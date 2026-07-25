@@ -71,24 +71,40 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         runButton.tap()
 
         let summary = app.staticTexts["sustained-summary"]
-        XCTAssertTrue(
-            summary.waitForExistence(timeout: 240),
-            "多帧持续硬编未在 240 秒内完成。"
-        )
+        var runs: [[String: String]] = []
 
-        let h264Evidence = app.staticTexts["sustained-h264-1080p-evidence"]
-        let hevc1080Evidence = app.staticTexts["sustained-hevc-1080p-evidence"]
-        let hevc4KEvidence = app.staticTexts["sustained-hevc-4k-evidence"]
-        XCTAssertTrue(h264Evidence.waitForExistence(timeout: 30))
-        XCTAssertTrue(hevc1080Evidence.waitForExistence(timeout: 30))
-        XCTAssertTrue(hevc4KEvidence.waitForExistence(timeout: 30))
+        for runNumber in 1...3 {
+            XCTAssertTrue(
+                summary.waitForExistence(timeout: 240),
+                "第 \(runNumber) 轮多帧持续硬编未在 240 秒内完成。"
+            )
 
-        let report: [String: String] = [
+            let result = try sustainedResult(in: app, runNumber: runNumber)
+            runs.append(result)
+
+            if runNumber < 3 {
+                let rerunButton = app.buttons["sustained-rerun-button"]
+                XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
+                makeHittable(rerunButton, in: app)
+                rerunButton.tap()
+
+                let disappeared = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == false"),
+                    object: summary
+                )
+                XCTAssertEqual(
+                    XCTWaiter.wait(for: [disappeared], timeout: 30),
+                    .completed,
+                    "第 \(runNumber + 1) 轮没有进入运行状态。"
+                )
+            }
+        }
+
+        let report: [String: Any] = [
             "schema_version": "1.0",
             "summary": normalizedSummary(summary.label, expected: "3/3"),
-            "h264_1080p30_evidence": h264Evidence.label,
-            "hevc_1080p30_evidence": hevc1080Evidence.label,
-            "hevc_4k30_evidence": hevc4KEvidence.label,
+            "run_count": runs.count,
+            "runs": runs,
             "runner_device_model": UIDevice.current.model,
             "runner_system_name": UIDevice.current.systemName,
             "runner_system_version": UIDevice.current.systemVersion,
@@ -104,19 +120,53 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         screenshot.name = "VideoToolbox 持续硬编结果"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+
+    @MainActor
+    private func sustainedResult(
+        in app: XCUIApplication,
+        runNumber: Int
+    ) throws -> [String: String] {
+        let h264Evidence = app.staticTexts["sustained-h264-1080p-evidence"]
+        let hevc1080Evidence = app.staticTexts["sustained-hevc-1080p-evidence"]
+        let hevc4KEvidence = app.staticTexts["sustained-hevc-4k-evidence"]
+        let h264Metrics = app.staticTexts["sustained-h264-1080p-metrics"]
+        let hevc1080Metrics = app.staticTexts["sustained-hevc-1080p-metrics"]
+        let hevc4KMetrics = app.staticTexts["sustained-hevc-4k-metrics"]
+
+        for element in [
+            h264Evidence,
+            hevc1080Evidence,
+            hevc4KEvidence,
+            h264Metrics,
+            hevc1080Metrics,
+            hevc4KMetrics,
+        ] {
+            XCTAssertTrue(element.waitForExistence(timeout: 30))
+        }
 
         XCTAssertTrue(
             h264Evidence.label.contains("E6"),
-            "H.264 1080p30 未达到 E6。"
+            "第 \(runNumber) 轮 H.264 1080p30 未达到 E6。"
         )
         XCTAssertTrue(
             hevc1080Evidence.label.contains("E6"),
-            "HEVC 1080p30 未达到 E6。"
+            "第 \(runNumber) 轮 HEVC 1080p30 未达到 E6。"
         )
         XCTAssertTrue(
             hevc4KEvidence.label.contains("E5"),
-            "HEVC 4K30 未达到 E5。"
+            "第 \(runNumber) 轮 HEVC 4K30 未达到 E5。"
         )
+
+        return [
+            "run": String(runNumber),
+            "h264_1080p30_evidence": h264Evidence.label,
+            "h264_1080p30_metrics": h264Metrics.label,
+            "hevc_1080p30_evidence": hevc1080Evidence.label,
+            "hevc_1080p30_metrics": hevc1080Metrics.label,
+            "hevc_4k30_evidence": hevc4KEvidence.label,
+            "hevc_4k30_metrics": hevc4KMetrics.label,
+        ]
     }
 
     @MainActor
