@@ -2,7 +2,7 @@
 
 > 更新日期：2026-07-26
 > 当前阶段：P1、P2、P3 已通过，下一阶段为 P4 真实视频转码纵切
-> 当前路线：免费 Apple Account + SideStore 阶段验收 + GitHub Actions 云端构建 + BrowserStack 日常真机回归
+> 当前路线：免费 Apple Account + SideStore 阶段验收 + GitHub Actions 云端构建 + AWS Device Farm 日常真机回归
 > 本文件用途：新会话、新代理或新开发者接手项目时的唯一入口
 
 ## 1. 一句话目标
@@ -138,7 +138,7 @@ SideStore 在手机端签名、安装或更新
 
 ## 8. 当前唯一应执行的开发任务：P4
 
-P1 已完成 SideStore 安装与覆盖更新闭环；P2 已完成分级只读能力探针；P3 已在 BrowserStack iPhone 17 Pro 上连续三轮取得 H.264 1080p30、HEVC 1080p30 和 HEVC 4K30 的 E6 证据，并验证取消后可重新创建编码会话。
+P1 已完成 SideStore 安装与覆盖更新闭环；P2 已完成分级只读能力探针；P3 已在 BrowserStack iPhone 17 Pro 上连续三轮取得 H.264 1080p30、HEVC 1080p30 和 HEVC 4K30 的 E6 证据，并验证取消后可重新创建编码会话。当前先把默认日常真机供应商切换到 AWS Device Farm，首次全链路通过后立即继续 P4。
 
 P4 只实现一个固定的 10 秒真实视频纵切：
 
