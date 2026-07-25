@@ -758,7 +758,10 @@ enum VideoTranscoder {
             ),
             PreservationCheck(
                 name: "色彩与 HDR 描述",
-                passed: inputVideo.color == outputVideo.color,
+                passed: colorPreserved(
+                    input: inputVideo.color,
+                    output: outputVideo.color
+                ),
                 inputValue: String(describing: inputVideo.color),
                 outputValue: String(describing: outputVideo.color),
                 detail: "色域、传递函数、矩阵、位深和 HDR 静态元数据逐项一致。"
@@ -811,6 +814,49 @@ enum VideoTranscoder {
             return lhs == nil && rhs == nil
         }
         return abs(lhs - rhs) < 0.5
+    }
+
+    private static func colorPreserved(
+        input: MediaColorSummary?,
+        output: MediaColorSummary?
+    ) -> Bool {
+        guard let input else {
+            return true
+        }
+        guard let output else {
+            return false
+        }
+        return optionalFieldPreserved(
+            input.colorPrimaries,
+            output.colorPrimaries
+        )
+            && optionalFieldPreserved(
+                input.transferFunction,
+                output.transferFunction
+            )
+            && optionalFieldPreserved(input.yCbCrMatrix, output.yCbCrMatrix)
+            && optionalFieldPreserved(
+                input.bitsPerComponent,
+                output.bitsPerComponent
+            )
+            && optionalFieldPreserved(
+                input.masteringDisplayColorVolume,
+                output.masteringDisplayColorVolume
+            )
+            && optionalFieldPreserved(
+                input.contentLightLevelInfo,
+                output.contentLightLevelInfo
+            )
+    }
+
+    private static func optionalFieldPreserved<Value: Equatable>(
+        _ input: Value?,
+        _ output: Value?
+    ) -> Bool {
+        guard let input else {
+            return true
+        }
+        return input == output
     }
 
     private static func makeOutputURL(

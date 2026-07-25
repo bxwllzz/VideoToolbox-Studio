@@ -54,7 +54,9 @@ enum MediaInspector {
     static func colorSummary(
         from formatDescription: CMFormatDescription
     ) -> MediaColorSummary {
-        let extensions = CMFormatDescriptionGetExtensions(formatDescription) as NSDictionary
+        let extensions = (
+            CMFormatDescriptionGetExtensions(formatDescription) as NSDictionary?
+        ) ?? NSDictionary()
         return MediaColorSummary(
             colorPrimaries: stringValue(
                 extensions.object(forKey: kCMFormatDescriptionExtension_ColorPrimaries)
@@ -110,7 +112,7 @@ enum MediaInspector {
             naturalWidth: naturalSize.map { Double($0.width) },
             naturalHeight: naturalSize.map { Double($0.height) },
             nominalFrameRate: Double(nominalFrameRate),
-            estimatedDataRate: estimatedDataRate,
+            estimatedDataRate: Double(estimatedDataRate),
             timeRangeStartSeconds: seconds(timeRange.start),
             timeRangeDurationSeconds: seconds(timeRange.duration),
             naturalTimeScale: naturalTimeScale,
