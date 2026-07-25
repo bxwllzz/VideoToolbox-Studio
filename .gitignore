@@ -1,0 +1,27 @@
+# Xcode 与 XcodeGen
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+build/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# 本地构建与签名材料
+*.ipa
+*.mobileprovision
+*.p12
+*.cer
+*.p8
+*.pairing
+*.pairingfile
+build-info.json
+Payload/
+
+# Work 模式会话上传区，不属于工程源码
+/upload/

@@ -1,0 +1,72 @@
+name: VideoToolboxStudio
+
+options:
+  minimumXcodeGenVersion: 2.46.0
+  createIntermediateGroups: true
+  groupSortPosition: top
+  deploymentTarget:
+    iOS: "26.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    SUPPORTS_MACCATALYST: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED: YES
+
+targets:
+  VideoToolboxStudio:
+    type: application
+    platform: iOS
+    sources:
+      - path: VideoToolboxStudio
+        excludes:
+          - Resources
+    resources:
+      - path: VideoToolboxStudio/Resources/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.bxwllzz.VideoToolboxStudio
+        PRODUCT_NAME: VideoToolboxStudio
+        PRODUCT_MODULE_NAME: VideoToolboxStudio
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: VideoToolboxStudio/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        BUILD_COMMIT_SHA: local
+        BUILD_TIMESTAMP: unknown
+        BUILD_RUN_ID: local
+        BUILD_RUN_NUMBER: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SKIP_INSTALL: NO
+
+  VideoToolboxStudioTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: VideoToolboxStudioTests
+    dependencies:
+      - target: VideoToolboxStudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.bxwllzz.VideoToolboxStudioTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/VideoToolboxStudio.app/VideoToolboxStudio"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  VideoToolboxStudio:
+    build:
+      targets:
+        VideoToolboxStudio: all
+    test:
+      gatherCoverageData: true
+      targets:
+        - name: VideoToolboxStudioTests
+          parallelizable: false

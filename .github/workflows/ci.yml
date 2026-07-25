@@ -1,0 +1,82 @@
+name: 持续集成
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  XCODEGEN_VERSION: "2.46.0"
+  SIMULATOR_DESTINATION: platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5
+
+jobs:
+  build-and-test:
+    name: 编译与单元测试
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7.0.1
+
+      - name: 安装固定版本 XcodeGen
+        run: scripts/install-xcodegen.sh
+
+      - name: 记录构建环境
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcodegen version
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate --spec project.yml
+
+      - name: 编译模拟器版本
+        run: |
+          set -euo pipefail
+          mkdir -p build/logs
+          xcodebuild \
+            -project VideoToolboxStudio.xcodeproj \
+            -scheme VideoToolboxStudio \
+            -configuration Debug \
+            -destination "${SIMULATOR_DESTINATION}" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build \
+            2>&1 | tee build/logs/build.log
+
+      - name: 运行单元测试
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project VideoToolboxStudio.xcodeproj \
+            -scheme VideoToolboxStudio \
+            -configuration Debug \
+            -destination "${SIMULATOR_DESTINATION}" \
+            -derivedDataPath build/DerivedData \
+            -resultBundlePath build/TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test \
+            2>&1 | tee build/logs/test.log
+
+      - name: 上传诊断产物
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ci-${{ github.run_number }}-${{ github.sha }}
+          path: |
+            build/logs
+            build/TestResults.xcresult
+          if-no-files-found: warn
+          retention-days: 14
