@@ -27,7 +27,6 @@ permissions:
   contents: read
   id-token: write
   statuses: write
-  statuses: write
 
 concurrency:
   group: aws-devicefarm-${{ github.ref }}
@@ -208,36 +207,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: 发布 AWS 真机提交状态
-        if: ${{ always() && github.event_name != 'pull_request' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          JOB_STATUS: ${{ job.status }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          case "${JOB_STATUS}" in
-            success)
-              state="success"
-              description="AWS Device Farm 真机回归通过"
-              ;;
-            failure)
-              state="failure"
-              description="AWS Device Farm 真机回归失败"
-              ;;
-            *)
-              state="error"
-              description="AWS Device Farm 真机回归未正常完成"
-              ;;
-          esac
-
-          gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -f state="${state}" \
-            -f context="AWS Device Farm 真机回归" \
-            -f description="${description}" \
-            -f target_url="${RUN_URL}"
 
       - name: 发布 AWS 真机提交状态
         if: ${{ always() && github.event_name != 'pull_request' }}
