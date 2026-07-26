@@ -113,7 +113,7 @@ jobs:
           BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
           BROWSERSTACK_ONLY_TESTING: CapabilityProbeCloudUITests/test真实视频转码与保真复核通过
         run: |
-          scripts/run-browserstack-xcuitest.sh \
+          bash scripts/run-browserstack-xcuitest.sh \
             build/browserstack/package/VideoToolboxStudio.ipa \
             build/browserstack/package/VideoToolboxStudioCloudTests.zip \
             build/browserstack/results
