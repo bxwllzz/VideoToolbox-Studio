@@ -63,19 +63,6 @@ jobs:
       - name: 生成 Xcode 工程
         run: xcodegen generate --spec project.yml
 
-      - name: 预检压缩 Writer Input 配置
-        run: |
-          set -euo pipefail
-          xcodebuild \
-            -project VideoToolboxStudio.xcodeproj \
-            -scheme VideoToolboxStudio \
-            -configuration Debug \
-            -destination "platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5" \
-            -derivedDataPath "${PWD}/build/AWSPreflightDerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            -only-testing:VideoToolboxStudioTests/VideoWriterInputTests \
-            test
-
       - name: 构建 App 与 XCUITest Runner
         run: |
           set -euo pipefail

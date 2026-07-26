@@ -4,6 +4,11 @@ import XCTest
 
 final class VideoWriterInputTests: XCTestCase {
     func testCompressedVideoInputAcceptsTrackConfigurationWithFormatHint() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mov")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
         var formatHint: CMVideoFormatDescription?
         let status = CMVideoFormatDescriptionCreate(
             allocator: kCFAllocatorDefault,
@@ -21,11 +26,14 @@ final class VideoWriterInputTests: XCTestCase {
             outputSettings: nil,
             sourceFormatHint: unwrappedHint
         )
-        input.expectsMediaDataInRealTime = false
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        XCTAssertTrue(writer.canAdd(input))
+        writer.add(input)
+
         input.transform = .identity
-        input.mediaTimeScale = 600
+        input.metadata = []
 
         XCTAssertFalse(input.expectsMediaDataInRealTime)
-        XCTAssertEqual(input.mediaTimeScale, 600)
+        XCTAssertEqual(input.transform, .identity)
     }
 }

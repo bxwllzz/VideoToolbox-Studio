@@ -284,14 +284,14 @@ enum VideoTranscoder {
             outputSettings: nil,
             sourceFormatHint: videoFormatHint
         )
-        videoWriterInput.expectsMediaDataInRealTime = false
-        videoWriterInput.transform = try await videoTrack.load(.preferredTransform)
-        videoWriterInput.mediaTimeScale = try await videoTrack.load(.naturalTimeScale)
-        videoWriterInput.metadata = try await videoTrack.load(.metadata)
         guard writer.canAdd(videoWriterInput) else {
             throw TranscodeError.writerFailed("无法添加压缩视频轨道。")
         }
         writer.add(videoWriterInput)
+        // Pass-through inputs resolve their concrete helper from compressed
+        // samples. Avoid helper-backed setters that reject the unknown state.
+        videoWriterInput.transform = try await videoTrack.load(.preferredTransform)
+        videoWriterInput.metadata = try await videoTrack.load(.metadata)
 
         var passthroughChannels: [PassthroughChannel] = []
         for track in nonVideoTracks {
@@ -317,11 +317,6 @@ enum VideoTranscoder {
                 outputSettings: nil,
                 sourceFormatHint: formatHint
             )
-            writerInput.expectsMediaDataInRealTime = false
-            writerInput.mediaTimeScale = try await track.load(.naturalTimeScale)
-            writerInput.languageCode = try? await track.load(.languageCode)
-            writerInput.extendedLanguageTag = try? await track.load(.extendedLanguageTag)
-            writerInput.metadata = try await track.load(.metadata)
             guard writer.canAdd(writerInput) else {
                 throw TranscodeError.cannotPreserveTrack(
                     "\(track.mediaType.rawValue)#\(track.trackID)：MOV 不接受原压缩格式"
@@ -329,6 +324,9 @@ enum VideoTranscoder {
             }
             reader.add(readerOutput)
             writer.add(writerInput)
+            writerInput.languageCode = try? await track.load(.languageCode)
+            writerInput.extendedLanguageTag = try? await track.load(.extendedLanguageTag)
+            writerInput.metadata = try await track.load(.metadata)
             passthroughChannels.append(
                 PassthroughChannel(
                     readerOutput: readerOutput,
