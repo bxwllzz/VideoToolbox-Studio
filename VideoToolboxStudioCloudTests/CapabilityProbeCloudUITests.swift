@@ -53,7 +53,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
 
         XCTAssertTrue(
             summaryLabel.contains(expectedSummary),
-            "严格硬件会话未全部通过；请检查 BrowserStack 真机日志。"
+            "严格硬件会话未全部通过；请检查 AWS Device Farm 真机日志。"
         )
     }
 
@@ -159,10 +159,25 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         rerunButton.tap()
 
         let summary = app.staticTexts["sustained-summary"]
-        XCTAssertTrue(
-            summary.waitForExistence(timeout: 240),
-            "取消后的新编码会话未能完成。"
+        let disappeared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: summary
         )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [disappeared], timeout: 30),
+            .completed,
+            "取消后的重新运行没有进入编码状态。"
+        )
+        XCTAssertTrue(
+            waitForSustainedCompletion(
+                rerunButton: rerunButton,
+                in: app,
+                timeout: 90
+            ),
+            "取消后的新编码会话未在 90 秒内完成。"
+        )
+        makeHittableFromBelow(summary, in: app)
+        XCTAssertTrue(summary.waitForExistence(timeout: 30))
         XCTAssertTrue(
             summary.label.contains("3/3"),
             "取消后重新创建的编码会话未全部达标。"
