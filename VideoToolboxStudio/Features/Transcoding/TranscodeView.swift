@@ -30,7 +30,7 @@ struct TranscodeView: View {
 
     var body: some View {
         Form {
-            presetSection
+            appSettingsSection
             professionalSection
             estimateSection
             outputSection
@@ -58,26 +58,13 @@ struct TranscodeView: View {
         .onAppear {
             if isCloudTesting, !appliedCloudTestSettings {
                 appliedCloudTestSettings = true
-                store.applyPreset(.fidelity)
+                store.applyCloudTestSettings()
             }
         }
     }
 
-    private var presetSection: some View {
-        Section("参数模板") {
-            HStack {
-                parameterTitle("模板", help: .preset)
-                Spacer()
-                Picker("", selection: Binding(
-                    get: { store.selectedPreset },
-                    set: { store.applyPreset($0) }
-                )) {
-                    ForEach(TranscodePreset.allCases) { preset in
-                        Text(preset.title).tag(preset)
-                    }
-                }
-                .labelsHidden()
-            }
+    private var appSettingsSection: some View {
+        Section("App 设置") {
             parameterToggle(
                 "记住上次参数",
                 help: .rememberSettings,
@@ -91,193 +78,12 @@ struct TranscodeView: View {
     }
 
     private var professionalSection: some View {
-        Section {
-            HStack {
-                parameterTitle("目标编码", help: .targetCodec)
-                Spacer()
-                Picker("", selection: settingBinding(\.targetCodec)) {
-                    ForEach(TranscodeTargetCodec.allCases) { codec in
-                        Text(codec.title).tag(codec)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            HStack {
-                parameterTitle("编码质量", help: .encodingQuality)
-                Spacer()
-                Picker("", selection: encodingQualityBinding) {
-                    ForEach(TranscodeEncodingQuality.allCases) { quality in
-                        Text(quality.title).tag(quality)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            HStack {
-                parameterTitle("码率控制", help: .rateControl)
-                Spacer()
-                Picker("", selection: settingBinding(\.rateControl)) {
-                    ForEach(TranscodeRateControl.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            switch store.settings.rateControl {
-            case .sourceRatio:
-                LabeledContent(
-                    content: {
-                        Text("\(Int(store.settings.sourceBitRateRatio * 100))%")
-                    },
-                    label: {
-                        parameterTitle("源码率比例", help: .sourceRatio)
-                    }
-                )
-                Slider(
-                    value: settingBinding(\.sourceBitRateRatio),
-                    in: 0.10...1.50,
-                    step: 0.05
-                )
-            case .fixedBitRate:
-                LabeledContent(
-                    content: {
-                        Text(
-                            String(
-                                format: "%.1f Mbps",
-                                Double(store.settings.fixedBitRate) / 1_000_000
-                            )
-                        )
-                    },
-                    label: {
-                        parameterTitle("平均码率", help: .fixedBitRate)
-                    }
-                )
-                Slider(
-                    value: Binding(
-                        get: { Double(store.settings.fixedBitRate) / 1_000_000 },
-                        set: {
-                            store.settings.fixedBitRate = Int($0 * 1_000_000)
-                            store.markCustom()
-                        }
-                    ),
-                    in: 0.5...100,
-                    step: 0.5
-                )
-            case .quality:
-                LabeledContent(
-                    content: {
-                        Text(String(format: "%.2f", store.settings.quality))
-                    },
-                    label: {
-                        parameterTitle("质量因子", help: .quality)
-                    }
-                )
-                Slider(
-                    value: settingBinding(\.quality),
-                    in: 0...1,
-                    step: 0.01
-                )
-                LabeledContent(
-                    "当前质量偏好",
-                    value: qualityPreferenceDescription
-                )
-            }
-
-            parameterToggle(
-                "限制峰值码率",
-                help: .peakLimit,
-                isOn: Binding(
-                    get: { store.settings.dataRateLimitMultiplier != nil },
-                    set: {
-                        store.settings.dataRateLimitMultiplier = $0 ? 1.5 : nil
-                        store.markCustom()
-                    }
-                )
-            )
-            if store.settings.dataRateLimitMultiplier != nil {
-                LabeledContent(
-                    content: {
-                        Text(
-                            String(
-                                format: "%.2f×",
-                                store.settings.dataRateLimitMultiplier ?? 1.5
-                            )
-                        )
-                    },
-                    label: {
-                        parameterTitle("峰值倍数", help: .peakMultiplier)
-                    }
-                )
-                Slider(
-                    value: Binding(
-                        get: { store.settings.dataRateLimitMultiplier ?? 1.5 },
-                        set: {
-                            store.settings.dataRateLimitMultiplier = $0
-                            store.markCustom()
-                        }
-                    ),
-                    in: 1...4,
-                    step: 0.25
-                )
-            }
-
-            Stepper(
-                value: settingBinding(\.maxKeyFrameInterval),
-                in: 0...600,
-                step: 10
-            ) {
-                HStack {
-                    parameterTitle("关键帧帧数上限", help: .keyFrameInterval)
-                    Spacer()
-                    Text(
-                        store.settings.maxKeyFrameInterval == 0
-                            ? "关闭"
-                            : "\(store.settings.maxKeyFrameInterval) 帧"
-                    )
-                    .foregroundStyle(.secondary)
-                }
-            }
-            LabeledContent(
-                content: {
-                    Text(
-                        store.settings.maxKeyFrameIntervalDuration == 0
-                            ? "关闭"
-                            : String(
-                                format: "%.1f s",
-                                store.settings.maxKeyFrameIntervalDuration
-                            )
-                    )
-                },
-                label: {
-                    parameterTitle("关键帧时间上限", help: .keyFrameDuration)
-                }
-            )
-            Slider(
-                value: settingBinding(\.maxKeyFrameIntervalDuration),
-                in: 0...10,
-                step: 0.5
-            )
-            parameterToggle(
-                "允许帧重排序（B 帧）",
-                help: .frameReordering,
-                isOn: settingBinding(\.allowFrameReordering)
-            )
-            parameterToggle(
-                "实时编码",
-                help: .realTime,
-                isOn: realTimeBinding
-            )
-            parameterToggle(
-                "速度优先于质量",
-                help: .speedPriority,
-                isOn: speedPriorityBinding
-            )
-        } header: {
-            Text("专业参数（已验证）")
-        }
-        .disabled(store.isRunning)
+        NativeCompressionSettingsView(
+            settings: $store.settings,
+            capabilityState: store.nativeCapabilityState,
+            isDisabled: store.isRunning,
+            onCodecChange: store.selectCodec
+        )
     }
 
     private var estimateSection: some View {
@@ -450,7 +256,7 @@ struct TranscodeView: View {
                     return
                 }
                 store.add([sampleURL], replaceQueue: true)
-                store.applyPreset(.fidelity)
+                store.applyCloudTestSettings()
                 store.start(buildReport: buildReport)
             } label: {
                 Label("运行真实转码自检", systemImage: "checkmark.seal")
@@ -502,17 +308,20 @@ struct TranscodeView: View {
 
     private func multiPassEvidence(_ report: TranscodeReport) -> String {
         if report.metrics.videoEncodingPasses > 1 {
-            return "精细编码已执行 \(report.metrics.videoEncodingPasses) 遍"
+            return "多遍编码实际执行 \(report.metrics.videoEncodingPasses) 遍"
+        }
+        guard report.requestedSettings.multiPassStorageEnabled else {
+            return "MultiPassStorage 未设置，实际单遍"
         }
         guard let write = report.propertyWrites.first(where: {
             $0.key == "MultiPassStorage"
         }) else {
-            return "标准单遍编码"
+            return "MultiPassStorage 未执行，实际单遍"
         }
         if write.status.succeeded {
             return "设备接受多遍编码，但本片未请求追加遍次"
         }
-        return "设备不支持当前多遍路径，已保真回退单遍"
+        return "设备不支持当前多遍路径，自动回退单遍"
     }
 
     @ViewBuilder
@@ -542,75 +351,8 @@ struct TranscodeView: View {
         }
     }
 
-    private func settingBinding<Value>(
-        _ keyPath: WritableKeyPath<TranscodeSettings, Value>
-    ) -> Binding<Value> {
-        Binding(
-            get: { store.settings[keyPath: keyPath] },
-            set: {
-                store.settings[keyPath: keyPath] = $0
-                store.markCustom()
-            }
-        )
-    }
-
     private func formattedBytes(_ count: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
-    }
-
-    private var qualityPreferenceDescription: String {
-        switch store.settings.quality {
-        case ..<0.25:
-            "低"
-        case 0.25..<0.50:
-            "较低"
-        case 0.50..<0.75:
-            "正常"
-        case 0.75..<1:
-            "高"
-        default:
-            "最高"
-        }
-    }
-
-    private var encodingQualityBinding: Binding<TranscodeEncodingQuality> {
-        Binding(
-            get: { store.settings.encodingQuality },
-            set: {
-                store.settings.encodingQuality = $0
-                if $0 == .refined {
-                    store.settings.realTime = false
-                    store.settings.prioritizeEncodingSpeedOverQuality = false
-                }
-                store.markCustom()
-            }
-        )
-    }
-
-    private var realTimeBinding: Binding<Bool> {
-        Binding(
-            get: { store.settings.realTime },
-            set: {
-                store.settings.realTime = $0
-                if $0 {
-                    store.settings.encodingQuality = .standard
-                }
-                store.markCustom()
-            }
-        )
-    }
-
-    private var speedPriorityBinding: Binding<Bool> {
-        Binding(
-            get: { store.settings.prioritizeEncodingSpeedOverQuality },
-            set: {
-                store.settings.prioritizeEncodingSpeedOverQuality = $0
-                if $0 {
-                    store.settings.encodingQuality = .standard
-                }
-                store.markCustom()
-            }
-        )
     }
 
     private func parameterTitle(
@@ -733,21 +475,7 @@ struct TranscodeView: View {
 }
 
 private enum TranscodeParameterHelp: String, Identifiable {
-    case preset
     case rememberSettings
-    case targetCodec
-    case encodingQuality
-    case rateControl
-    case sourceRatio
-    case fixedBitRate
-    case quality
-    case peakLimit
-    case peakMultiplier
-    case keyFrameInterval
-    case keyFrameDuration
-    case frameReordering
-    case realTime
-    case speedPriority
     case sizeEstimate
     case automaticPhotoSave
     case deleteOriginal
@@ -756,36 +484,8 @@ private enum TranscodeParameterHelp: String, Identifiable {
 
     var title: String {
         switch self {
-        case .preset:
-            "参数模板"
         case .rememberSettings:
             "记住上次参数"
-        case .targetCodec:
-            "目标编码"
-        case .encodingQuality:
-            "编码质量"
-        case .rateControl:
-            "码率控制"
-        case .sourceRatio:
-            "源码率比例"
-        case .fixedBitRate:
-            "固定平均码率"
-        case .quality:
-            "质量因子"
-        case .peakLimit:
-            "限制峰值码率"
-        case .peakMultiplier:
-            "峰值倍数"
-        case .keyFrameInterval:
-            "关键帧帧数上限"
-        case .keyFrameDuration:
-            "关键帧时间上限"
-        case .frameReordering:
-            "允许帧重排序（B 帧）"
-        case .realTime:
-            "实时编码"
-        case .speedPriority:
-            "速度优先于质量"
         case .sizeEstimate:
             "输出大小估算"
         case .automaticPhotoSave:
@@ -797,38 +497,10 @@ private enum TranscodeParameterHelp: String, Identifiable {
 
     var message: String {
         switch self {
-        case .preset:
-            "保真优先使用精细编码和约 80% 源码率；均衡压缩约 60%；更小体积约 40%；H.264 兼容约 70%。选择专业自定义可逐项调整。"
         case .rememberSettings:
-            "默认开启。下次打开压缩设置时恢复最近一次模板和全部编码参数；关闭后下次使用均衡压缩默认值。"
-        case .targetCodec:
-            "自动保真会使用 HEVC，并自动保持输入的色彩、动态范围和位深。若 H.264 无法保真承载输入，任务会直接拒绝，不会静默降级。"
-        case .encodingQuality:
-            "标准为一次硬件编码。精细会关闭实时与速度优先，并请求多遍分析；在相同目标平均码率下通常能改善复杂画面的码率分配，但处理更慢、临时空间更多。当前硬件不支持多遍时，报告会明确记录回退，绝不伪装生效。"
-        case .rateControl:
-            "源码率比例和固定平均码率适合控制相同体积；质量因子让编码器自行决定码率，体积不可预先固定。若要“同体积更高质量”，请选择前两者并配合精细编码。"
-        case .sourceRatio:
-            "目标平均视频码率＝原视频平均视频码率×比例。它不包含原音频、元数据和容器开销，因此最终文件比例会有少量偏差。"
-        case .fixedBitRate:
-            "直接指定长期目标平均视频码率。瞬时码率仍可波动，最终文件还包含原音频、元数据和容器开销。"
-        case .quality:
-            "0～1 是编码器的质量偏好，不是压缩率或保留百分比。同一数值会因画面复杂度和编码器不同产生不同体积；请用真实试编码估算。"
-        case .peakLimit:
-            "限制任意连续 1 秒内的压缩视频数据量，防止短时码率过高。它是视频码流硬上限，不是文件大小上限。"
-        case .peakMultiplier:
-            "源码率比例或固定平均码率模式下，倍数相对于目标平均视频码率；质量因子模式没有目标平均码率，因此相对于原视频平均视频码率。"
-        case .keyFrameInterval:
-            "按帧数限制两个关键帧之间最多相隔多少帧；0 表示关闭。数值越小越利于随机定位，但通常会降低压缩效率。"
-        case .keyFrameDuration:
-            "按秒数限制两个关键帧之间最多相隔多久；0 表示关闭，适合可变帧率视频。与帧数上限同时启用时，先达到者要求关键帧。"
-        case .frameReordering:
-            "允许双向预测帧，通常能在相同码率下提高画质。离线压缩建议开启；代价是增加编解码延迟。"
-        case .realTime:
-            "要求编码器及时输出，适合直播。离线压缩建议关闭；开启后会自动退出精细编码。"
-        case .speedPriority:
-            "允许编码器牺牲压缩效率或画质换速度。只求保真和质量时建议关闭；开启后会自动退出精细编码。"
+            "这是 App 设置，不是编码器参数。默认开启；下次打开时恢复最近一次原生参数。关闭后不再保存，并在下次使用原生字段默认值。"
         case .sizeEstimate:
-            "对首个视频中段最多 5 秒执行与正式任务相同的硬件试编码，再按全片时长外推。画面复杂度变化仍会造成误差，质量因子无法靠公式精确换算。"
+            "这是 App 工具，不是编码器参数。对首个视频中段最多 5 秒执行相同的硬件试编码，再按全片时长外推；画面复杂度变化仍会造成误差。"
         case .automaticPhotoSave:
             "输出通过硬件编码和全部保真核验后才写入系统照片库，原视频不会被覆盖。保存失败时仍保留可导出的压缩文件。"
         case .deleteOriginal:

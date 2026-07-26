@@ -30,75 +30,25 @@ struct TranscodeReportView: View {
 
             Section("编码设置") {
                 LabeledContent(
-                    "目标编码",
+                    "codecType",
                     value: report.requestedSettings.targetCodec.title
-                )
-                LabeledContent(
-                    "码率控制",
-                    value: report.requestedSettings.rateControl.title
-                )
-                LabeledContent(
-                    "编码质量",
-                    value: report.requestedSettings.encodingQuality.title
                 )
                 LabeledContent(
                     "实际编码遍数",
                     value: "\(report.metrics.videoEncodingPasses)"
                 )
-                if let averageBitRate = report.resolvedSettings.averageBitRate {
+                ForEach(
+                    report.resolvedSettings.nativeProperties.keys.sorted(),
+                    id: \.self
+                ) { key in
                     LabeledContent(
-                        "目标平均码率",
-                        value: formattedBitRate(Double(averageBitRate))
-                    )
-                }
-                if let quality = report.resolvedSettings.quality {
-                    LabeledContent(
-                        "质量因子",
-                        value: String(format: "%.2f", quality)
-                    )
-                }
-                if let limits = report.resolvedSettings.dataRateLimits,
-                   limits.count >= 2
-                {
-                    LabeledContent(
-                        "码率硬上限",
-                        value: "\(formattedBitRate(limits[0] * 8)) / "
-                            + String(format: "%.1f 秒", limits[1])
-                    )
-                }
-                LabeledContent(
-                    "配置档次",
-                    value: report.resolvedSettings.profileLevel
-                )
-                LabeledContent(
-                    "关键帧帧数上限",
-                    value: report.resolvedSettings.maxKeyFrameInterval == 0
-                        ? "关闭"
-                        : "\(report.resolvedSettings.maxKeyFrameInterval) 帧"
-                )
-                LabeledContent(
-                    "关键帧时间上限",
-                    value: report.resolvedSettings.maxKeyFrameIntervalDuration == 0
-                        ? "关闭"
-                        : String(
-                            format: "%.1f 秒",
-                            report.resolvedSettings.maxKeyFrameIntervalDuration
+                        key,
+                        value: nativeValueDescription(
+                            key: key,
+                            report.resolvedSettings.nativeProperties[key]
                         )
-                )
-                LabeledContent(
-                    "帧重排序",
-                    value: report.resolvedSettings.allowFrameReordering ? "允许" : "禁止"
-                )
-                LabeledContent(
-                    "实时编码",
-                    value: report.resolvedSettings.realTime ? "开启" : "关闭"
-                )
-                LabeledContent(
-                    "速度优先",
-                    value: report.resolvedSettings.prioritizeEncodingSpeedOverQuality
-                        ? "开启"
-                        : "关闭"
-                )
+                    )
+                }
             }
 
             Section("性能") {
@@ -229,6 +179,33 @@ struct TranscodeReportView: View {
             return String(format: "%.2f Mb/s", bitRate / 1_000_000)
         }
         return String(format: "%.0f kb/s", bitRate / 1_000)
+    }
+
+    private func nativeValueDescription(
+        key: String,
+        _ value: NativeCompressionValue?
+    ) -> String {
+        guard let value else {
+            return "未设置"
+        }
+        switch value {
+        case .bool(let value):
+            return value ? "true" : "false"
+        case .number(let value):
+            return String(format: "%.8g", value)
+        case .string(let value):
+            if let descriptor = NativeCompressionPropertyCatalog.byKey[key],
+               case .base64Data = descriptor.kind,
+               let data = Data(base64Encoded: value) {
+                return "Base64（\(data.count) byte）"
+            }
+            return value
+        case .array, .object:
+            return value.jsonText
+                .replacingOccurrences(of: "\n", with: " ")
+        case .null:
+            return "null"
+        }
     }
 
     private func formattedBytes(_ count: Int64) -> String {

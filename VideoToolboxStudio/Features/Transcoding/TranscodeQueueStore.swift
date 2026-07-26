@@ -1,4 +1,6 @@
+import AVFoundation
 import Combine
+import CoreMedia
 import Foundation
 
 enum TranscodePhotoSaveState: Equatable {
@@ -53,13 +55,14 @@ struct TranscodeQueueJob: Identifiable {
 
 @MainActor
 final class TranscodeQueueStore: ObservableObject {
-    @Published var selectedPreset: TranscodePreset {
-        didSet {
-            persistEncodingPreferencesIfNeeded()
-        }
-    }
     @Published var settings: TranscodeSettings {
         didSet {
+            if oldValue != settings {
+                cancelEstimate()
+            }
+            if oldValue.targetCodec != settings.targetCodec {
+                refreshEncoderCapabilities()
+            }
             persistEncodingPreferencesIfNeeded()
         }
     }
@@ -70,7 +73,7 @@ final class TranscodeQueueStore: ObservableObject {
                 persistEncodingPreferencesIfNeeded()
             } else {
                 defaults.removeObject(forKey: PreferenceKey.settings)
-                defaults.removeObject(forKey: PreferenceKey.preset)
+                defaults.removeObject(forKey: PreferenceKey.legacyPreset)
             }
         }
     }
@@ -78,11 +81,14 @@ final class TranscodeQueueStore: ObservableObject {
     @Published private(set) var jobs: [TranscodeQueueJob] = []
     @Published private(set) var isRunning = false
     @Published private(set) var estimateState: TranscodeEstimateState = .idle
+    @Published private(set) var nativeCapabilityState:
+        NativeCompressionCapabilityState = .loading
 
     private var task: Task<Void, Never>?
     private var cancellationToken: EncodingCancellationToken?
     private var estimateTask: Task<Void, Never>?
     private var estimateCancellationToken: EncodingCancellationToken?
+    private var capabilityTask: Task<Void, Never>?
     private let defaults: UserDefaults
 
     init(
@@ -102,15 +108,11 @@ final class TranscodeQueueStore: ObservableObject {
            )
         {
             settings = savedSettings
-            selectedPreset = defaults
-                .string(forKey: PreferenceKey.preset)
-                .flatMap(TranscodePreset.init(rawValue:))
-                ?? .custom
         } else {
-            settings = TranscodePreset.balanced.settings
-            selectedPreset = .balanced
+            settings = .defaultSettings
         }
         jobs = initialSources.map(TranscodeQueueJob.init(source:))
+        refreshEncoderCapabilities()
     }
 
     convenience init(initialURLs: [URL]) {
@@ -142,25 +144,20 @@ final class TranscodeQueueStore: ObservableObject {
         return false
     }
 
-    func applyPreset(_ preset: TranscodePreset) {
-        cancelEstimate()
-        selectedPreset = preset
-        if preset != .custom {
-            settings = preset.settings
-        }
-    }
-
-    func markCustom() {
-        cancelEstimate()
-        if selectedPreset != .custom {
-            selectedPreset = .custom
-        }
-    }
-
     func restoreDefaultSettings() {
-        cancelEstimate()
-        settings = TranscodePreset.balanced.settings
-        selectedPreset = .balanced
+        settings = .defaultSettings
+    }
+
+    func selectCodec(_ codec: TranscodeTargetCodec) {
+        var updated = settings
+        updated.selectCodec(codec)
+        settings = updated
+    }
+
+    func applyCloudTestSettings() {
+        var cloudSettings = TranscodeSettings.defaultSettings
+        cloudSettings.multiPassStorageEnabled = true
+        settings = cloudSettings
     }
 
     func add(_ urls: [URL], replaceQueue: Bool) {
@@ -176,6 +173,7 @@ final class TranscodeQueueStore: ObservableObject {
             .filter { !existing.contains($0.id) }
             .map(TranscodeQueueJob.init(source:))
         jobs.append(contentsOf: additions)
+        refreshEncoderCapabilities()
     }
 
     func remove(_ id: UUID) {
@@ -183,6 +181,7 @@ final class TranscodeQueueStore: ObservableObject {
             return
         }
         jobs.removeAll { $0.id == id }
+        refreshEncoderCapabilities()
     }
 
     func clearFinished() {
@@ -197,6 +196,7 @@ final class TranscodeQueueStore: ObservableObject {
                 false
             }
         }
+        refreshEncoderCapabilities()
     }
 
     func start(buildReport: BuildReport) {
@@ -456,6 +456,58 @@ final class TranscodeQueueStore: ObservableObject {
         jobs[index].sourceDeletionState = state
     }
 
+    private func refreshEncoderCapabilities() {
+        capabilityTask?.cancel()
+        nativeCapabilityState = .loading
+        let source = jobs.first?.source
+        let codecType: CMVideoCodecType =
+            settings.targetCodec == .hevc
+                ? kCMVideoCodecType_HEVC
+                : kCMVideoCodecType_H264
+
+        capabilityTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            var width: Int32 = 1_920
+            var height: Int32 = 1_080
+            if let source,
+               let summary = try? await MediaInspector.inspect(source),
+               let video = summary.videoTracks.first,
+               let naturalWidth = video.naturalWidth,
+               let naturalHeight = video.naturalHeight {
+                width = Int32(
+                    max(1, min(Double(Int32.max), abs(naturalWidth))).rounded()
+                )
+                height = Int32(
+                    max(1, min(Double(Int32.max), abs(naturalHeight))).rounded()
+                )
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            let state = await Task.detached(priority: .userInitiated) {
+                NativeCompressionCapabilityProbe.run(
+                    codecType: codecType,
+                    width: width,
+                    height: height
+                )
+            }.value
+            guard !Task.isCancelled else {
+                return
+            }
+            if case .ready(let capabilities) = state {
+                let sanitized = self.settings.sanitized(
+                    for: capabilities
+                )
+                if sanitized != self.settings {
+                    self.settings = sanitized
+                }
+            }
+            self.nativeCapabilityState = state
+        }
+    }
+
     private func persistEncodingPreferencesIfNeeded() {
         guard rememberLastSettings,
               let data = try? JSONEncoder().encode(settings)
@@ -463,13 +515,12 @@ final class TranscodeQueueStore: ObservableObject {
             return
         }
         defaults.set(data, forKey: PreferenceKey.settings)
-        defaults.set(selectedPreset.rawValue, forKey: PreferenceKey.preset)
     }
 
     private enum PreferenceKey {
         static let rememberSettings =
             "transcode.preferences.remember-settings"
         static let settings = "transcode.preferences.settings.v1"
-        static let preset = "transcode.preferences.preset.v1"
+        static let legacyPreset = "transcode.preferences.preset.v1"
     }
 }

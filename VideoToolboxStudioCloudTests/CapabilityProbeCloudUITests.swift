@@ -259,6 +259,45 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         XCTAssertTrue(nextButton.waitForExistence(timeout: 10))
         nextButton.tap()
 
+        let capabilityStatus = app.descendants(
+            matching: .any
+        )["native-capability-status"]
+        XCTAssertTrue(
+            capabilityStatus.waitForExistence(timeout: 60),
+            "压缩设置页没有完成本机编码器支持字典检测。"
+        )
+        let nativeCapabilityLabel = capabilityStatus.label
+
+        let averageBitRateProperty = app.textFields[
+            "native-property-AverageBitRate"
+        ]
+        XCTAssertTrue(
+            averageBitRateProperty.waitForExistence(timeout: 30),
+            "默认互斥码率字段没有显示 AverageBitRate。"
+        )
+        let nativeAverageBitRateLabel =
+            averageBitRateProperty.value as? String
+            ?? averageBitRateProperty.label
+        XCTAssertFalse(
+            app.descendants(
+                matching: .any
+            )["native-property-ConstantBitRate"].exists,
+            "AverageBitRate 生效时不应同时显示 ConstantBitRate 输入行。"
+        )
+        let readOnlyProperty = app.descendants(
+            matching: .any
+        )["native-property-MaxFrameDelayCount"]
+        makeHittable(readOnlyProperty, in: app)
+        XCTAssertTrue(
+            readOnlyProperty.waitForExistence(timeout: 30),
+            "没有显示本机只读或不支持的 MaxFrameDelayCount。"
+        )
+        XCTAssertFalse(
+            readOnlyProperty.isEnabled,
+            "本机不可写的 MaxFrameDelayCount 没有置灰。"
+        )
+        let nativeReadOnlyPropertyLabel = readOnlyProperty.label
+
         let runButton = app.buttons["transcode-start"]
         makeHittable(runButton, in: app)
         XCTAssertTrue(
@@ -293,7 +332,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         makeHittable(multiPass, in: app)
         XCTAssertTrue(
             multiPass.waitForExistence(timeout: 30),
-            "没有回收到多遍编码实际执行或回退证据。"
+            "没有回收到 MultiPassStorage 实际执行或回退证据。"
         )
         XCTAssertTrue(
             summary.label.contains("1/1")
@@ -329,6 +368,9 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "schema_version": "1.0",
             "source": "system-photo-library",
             "source_metadata": sourceLabel,
+            "native_capability": nativeCapabilityLabel,
+            "native_average_bit_rate": nativeAverageBitRateLabel,
+            "native_read_only_property": nativeReadOnlyPropertyLabel,
             "summary": summaryLabel,
             "metrics": metricsLabel,
             "multi_pass": multiPassLabel,
