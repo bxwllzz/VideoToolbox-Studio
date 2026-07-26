@@ -90,10 +90,11 @@ final class TranscodeQueueStore: ObservableObject {
         defaults: UserDefaults = .standard
     ) {
         self.defaults = defaults
-        rememberLastSettings =
+        let shouldRemember =
             defaults.object(forKey: PreferenceKey.rememberSettings) as? Bool
                 ?? true
-        if rememberLastSettings,
+        rememberLastSettings = shouldRemember
+        if shouldRemember,
            let data = defaults.data(forKey: PreferenceKey.settings),
            let savedSettings = try? JSONDecoder().decode(
                TranscodeSettings.self,

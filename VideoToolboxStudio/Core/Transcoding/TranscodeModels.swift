@@ -336,7 +336,6 @@ struct ResolvedTranscodeSettings: Codable, Equatable, Sendable {
     let averageBitRate: Int?
     let quality: Double?
     let dataRateLimits: [Double]?
-    let suggestedLookAheadFrameCount: Int?
     let expectedFrameRate: Double
     let maxKeyFrameInterval: Int
     let maxKeyFrameIntervalDuration: Double

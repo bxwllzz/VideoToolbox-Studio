@@ -99,14 +99,6 @@ struct TranscodeReportView: View {
                         ? "开启"
                         : "关闭"
                 )
-                if let lookAhead =
-                    report.resolvedSettings.suggestedLookAheadFrameCount
-                {
-                    LabeledContent(
-                        "请求前向分析",
-                        value: "\(lookAhead) 帧"
-                    )
-                }
             }
 
             Section("性能") {

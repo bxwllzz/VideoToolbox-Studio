@@ -324,8 +324,6 @@ enum VideoTranscoder {
             averageBitRate: averageBitRate,
             quality: quality,
             dataRateLimits: dataRateLimits,
-            suggestedLookAheadFrameCount:
-                settings.encodingQuality == .refined ? 60 : nil,
             expectedFrameRate: frameRate,
             maxKeyFrameInterval: settings.maxKeyFrameInterval,
             maxKeyFrameIntervalDuration: settings.maxKeyFrameIntervalDuration,
@@ -1547,15 +1545,6 @@ enum VideoTranscoder {
                 key: kVTCompressionPropertyKey_DataRateLimits,
                 name: "DataRateLimits",
                 value: values
-            )
-        }
-        if let lookAheadFrameCount = settings.suggestedLookAheadFrameCount {
-            appendOptionalProperty(
-                to: &writes,
-                session: session,
-                key: kVTCompressionPropertyKey_SuggestedLookAheadFrameCount,
-                name: "SuggestedLookAheadFrameCount",
-                value: NSNumber(value: lookAheadFrameCount)
             )
         }
         try appendProperty(

@@ -113,7 +113,6 @@ final class TranscodeSettingsTests: XCTestCase {
 
         XCTAssertEqual(resolved.encodingQuality, .refined)
         XCTAssertEqual(resolved.averageBitRate, 6_000_000)
-        XCTAssertEqual(resolved.suggestedLookAheadFrameCount, 60)
     }
 
     func test精细编码拒绝实时或速度优先() {
