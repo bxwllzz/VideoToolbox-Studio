@@ -271,7 +271,6 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         let averageBitRateProperty = app.descendants(
             matching: .any
         )["native-property-AverageBitRate"]
-        makeHittable(averageBitRateProperty, in: app)
         XCTAssertTrue(
             averageBitRateProperty.waitForExistence(timeout: 30),
             "默认互斥码率字段没有显示 AverageBitRate。"
