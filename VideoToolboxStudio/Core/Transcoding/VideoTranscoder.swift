@@ -2236,17 +2236,41 @@ private final class MultiPassResourceOwner {
         }
         isClosed = true
 
-        // Frame Silo 内部仍依赖 MultiPass Storage。ARC 会同步释放这里的
-        // 最后一个 Silo 引用；等它完成失效后，才能关闭调用方拥有的 Storage。
+        // iOS 26.3.1 上公开的 CFRelease 路径会进入
+        // VTFrameSiloInvalidate → VTMultiPassStorageClose，并与
+        // com.apple.coremedia.compressionsession.clientcallback 的服务断开
+        // 回调竞态，最终在系统框架内 EXC_BAD_ACCESS。VideoToolbox 没有公开
+        // 的 VTFrameSiloClose/Invalidate 替代 API，因此把已完成的 Silo
+        // 隔离保留到进程退出；不再让前台 App 执行这条有缺陷的释放路径。
+        if let frameSiloReference {
+            FrameSiloProcessLifetimeKeeper.shared.retain(frameSiloReference)
+            print("VT_FRAME_SILO_RELEASE=deferred-until-process-exit")
+        }
         frameSiloReference = nil
         if let storageReference {
-            VTMultiPassStorageClose(storageReference)
+            let closeStatus = VTMultiPassStorageClose(storageReference)
+            print("VT_MULTIPASS_STORAGE_CLOSE_STATUS=\(closeStatus)")
         }
         storageReference = nil
     }
 
     deinit {
         close()
+    }
+}
+
+private final class FrameSiloProcessLifetimeKeeper: @unchecked Sendable {
+    static let shared = FrameSiloProcessLifetimeKeeper()
+
+    private let lock = NSLock()
+    private var retainedSilos: [VTFrameSilo] = []
+
+    private init() {}
+
+    func retain(_ frameSilo: VTFrameSilo) {
+        lock.withLock {
+            retainedSilos.append(frameSilo)
+        }
     }
 }
 
