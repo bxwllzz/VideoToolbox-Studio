@@ -267,7 +267,7 @@ if [[ -z "${BROWSERSTACK_ONLY_TESTING:-}" \
 fi
 
 if [[ ( -z "${BROWSERSTACK_ONLY_TESTING:-}" \
-  || "${BROWSERSTACK_ONLY_TESTING:-}" == *"test真实视频转码与保真复核通过"* ) \
+  || "${BROWSERSTACK_ONLY_TESTING:-}" == *"testCloudTranscodePreservesMediaContract"* ) \
   && ! -s "${result_directory}/transcode-summary.json" ]]; then
   echo "错误：测试虽然通过，但未从日志回收到真实转码摘要。" >&2
   exit 1

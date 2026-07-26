@@ -162,7 +162,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
     }
 
     @MainActor
-    func test真实视频转码与保真复核通过() throws {
+    func testCloudTranscodePreservesMediaContract() throws {
         let app = XCUIApplication()
         app.launchArguments.append("--cloud-testing")
         app.launch()
