@@ -21,19 +21,20 @@ GitHub Actions 使用 OIDC（OpenID Connect，开放式身份连接）换取短�
 3. 将 `VideoToolboxStudioCloudTests-Runner.app` 打包为 `XCTEST_UI_TEST_PACKAGE` 类型的 ZIP；
 4. Device Farm 处理并自动重签两个上传对象；
 5. 从公共设备目录选择 iOS 26 或更高版本的 iPhone，优先 iPhone 17 Pro；
-6. 以 `XCTEST_UI` 类型执行只读探针、三轮持续硬编和取消恢复测试；
+6. 以 `XCTEST_UI` 类型执行测试；PR 只跑真实转码用例，`main` 和手动触发运行完整套件；
 7. 回收 Run、Job、文件、日志和截图，删除 Artifact 元数据中的临时下载 URL；
-8. 从 XCTest 日志提取 `capability-summary.json` 与 `sustained-encoding-summary.json`；
-9. 只有 Run 结果为 `PASSED` 且两个摘要都成功回收，工作流才判定通过。
+8. 从 XCTest 日志提取 `capability-summary.json`、`sustained-encoding-summary.json` 与 `transcode-summary.json`；
+9. 只有 Run 结果为 `PASSED` 且本轮要求的摘要都成功回收，工作流才判定通过。
 10. 无论终态如何，都向当前 commit 写入 `AWS Device Farm 真机回归` 提交状态及对应 Run 链接。
 
 ## 触发规则
 
-- PR（Pull Request，拉取请求）：只构建并打包待上传对象，不访问 AWS。这样不会受 IAM 角色只信任 `main` 分支的约束影响；
+- 仓库所有者 `bxwllzz` 从同仓库分支发起的 PR（Pull Request，拉取请求）：通过 OIDC 获取临时凭据，只执行 `testCloudTranscodePreservesMediaContract`；IAM 信任策略必须允许所有者仓库的 `:pull_request` 主体，并用不可变 `actor_id` 限制触发者；
+- 其他作者或 fork 发起的 PR：整个 AWS Job 跳过，不申请 OIDC 令牌，也不访问 AWS；
 - 推送到 `main`：通过 OIDC 获取临时凭据，并自动执行完整 Device Farm 真机回归；
 - Actions 页面手动触发：在所选分支执行完整回归。
 
-BrowserStack 工作流保留为手动备用通道，不再因 PR 自动消耗真机分钟。
+BrowserStack 免费额度耗尽后停止使用；工作流文件仅保留历史配置，不自动或手动触发。
 
 ## 结果口径
 
@@ -44,6 +45,11 @@ AWS 结果只证明 Artifact 中记录的设备、系统、构建和 commit 组�
 - `metadata/run-final.json`：Device Farm 原始终态；
 - `capability-summary.json`：严格硬件会话摘要；
 - `sustained-encoding-summary.json`：三轮持续硬编摘要；
+- `transcode-summary.json`：真实媒体转码、非视频样本直通与保真复核摘要；
 - `artifacts/`：Device Farm 日志、文件与截图。
 
 Device Farm 报告中的临时下载 URL 不进入 GitHub Artifact。
+
+## 当前接入状态
+
+Xcode 26.6 真机 App 与 XCUITest Runner 构建、打包已经通过；`main` 和同仓库所有者 PR 均已通过 OIDC 获取临时凭据、验证项目权限并进入 Device Farm。PR #6 已分别在 iPhone 14 Pro Max / iOS 26.5 与 iPhone 17 Pro / iOS 26.3.1 完成 300 帧 HEVC 转码、301 个 AAC 样本直通和保真复核，成功轮各计费 0.99 与 1.00 真机分钟。工作流会额外保存只包含 `aud`、`sub`、仓库、分支、工作流和作业名的 `oidc-claims.json`，不保存 JWT 或任何临时凭据。PR 接入以 `:pull_request` 信任主体、同仓库来源和所有者身份三项条件共同约束。

@@ -8,6 +8,16 @@
 
 **M2 持续硬编验证已通过**：BrowserStack iPhone 17 Pro 连续三轮运行 H.264 1080p30、HEVC 1080p30 和 HEVC 4K30 的 2 秒合成帧编码，全部 60/60 帧并达到 E6；取消后也能安全收尾并重新创建达标会话。
 
+**M3 真实转码纵切已实现**：支持从 Files 单选或批量导入视频，以严格硬件 VideoToolbox 会话转码并输出 MOV；除重新编码后必然变化的视频码流和文件大小外，分辨率、时间轴、方向、色彩/HDR 描述、音频与其他非视频轨道、容器元数据和文件创建时间均执行强制复核，不能保留时明确失败。
+
+## 视频转换
+
+- 单个任务与顺序批量队列，显示进度并可取消；不覆盖原视频，失败或取消会清理残缺输出；
+- `保真优先`、`均衡压缩`、`更小体积`、`H.264 兼容` 四种模板，以及专业自定义模式；
+- 可控制 H.264/HEVC、源码率比例/固定平均码率/质量因子、Data Rate Limits、关键帧间隔、B 帧、实时模式和速度优先；
+- HDR/10-bit 自动选择 HEVC Main10；不能保真时拒绝转换，不静默降级为 SDR；
+- 每个任务都导出版本化 JSON，记录请求参数、VideoToolbox `OSStatus`、硬编证据、输入/输出属性和逐项保真检查。
+
 ## 当前目标
 
 | 项目 | 固定值 |
@@ -35,8 +45,8 @@ project.yml               XcodeGen 工程定义
 
 - `持续集成`：生成 Xcode 工程，在 iPhone 17 Pro / iOS 26.5 模拟器上编译和运行单元测试；
 - `构建无签名 IPA`：为真机编译无签名 App，输出 IPA、构建信息、日志和 SHA-256 校验值。
-- `AWS Device Farm 真机回归`：PR 先验证真机包构建，合入 `main` 后通过 OIDC 自动上传、重签、运行并回收证据；
-- `BrowserStack 真机回归`：保留为手动备用通道。
+- `AWS Device Farm 真机回归`：所有者从同仓库分支发起的 PR 通过 OIDC 运行单个真实转码用例，`main` 运行完整真机套件；
+- `BrowserStack 真机回归`：已停用；工作流文件仅保留历史配置，不再触发。
 
 完整手机端安装步骤见 [SideStore 安装说明](docs/SIDESTORE_INSTALL.md)。
 默认云真机通道的身份边界、触发规则与结果口径见 [AWS Device Farm 真机回归](docs/AWS_DEVICE_FARM.md)；备用通道见 [BrowserStack 云真机回归](docs/BROWSERSTACK.md)。
@@ -49,4 +59,4 @@ project.yml               XcodeGen 工程定义
 
 ## 开发顺序
 
-当前的完整范围、阶段门和证据要求见 [项目 Handoff](docs/HANDOFF.md) 与 [开发路线图](docs/ROADMAP.md)。下一阶段是 M3 真实视频纵切。
+当前的完整范围、阶段门和证据要求见 [项目 Handoff](docs/HANDOFF.md) 与 [开发路线图](docs/ROADMAP.md)。下一阶段是 M4 10-bit/HDR 真源闭环。

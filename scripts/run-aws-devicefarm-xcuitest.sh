@@ -12,6 +12,7 @@ readonly result_directory="$3"
 readonly aws_region="${AWS_REGION:-us-west-2}"
 readonly project_arn="${AWS_DEVICE_FARM_PROJECT_ARN:-}"
 readonly minimum_ios_major="${AWS_DEVICE_FARM_MIN_IOS_MAJOR:-26}"
+readonly test_filter="${AWS_DEVICE_FARM_TEST_FILTER:-}"
 
 if [[ ! -f "${ipa_path}" ]]; then
   echo "错误：未找到 IPA：${ipa_path}" >&2
@@ -161,7 +162,9 @@ selected_device="$(
         .devices[]
         | select(.platform == "IOS")
         | select(.formFactor == "PHONE")
+        | (.model | sub("^Apple "; "") | sub(" +$"; "")) as $model
         | . + {
+            normalized_model: $model,
             parsed_os: (
               (.os | tostring | split(".") | map(tonumber? // 0))
               + [0, 0, 0]
@@ -171,10 +174,10 @@ selected_device="$(
               catch 0
             ),
             model_priority: (
-              if .model == "iPhone 17 Pro" then 4
-              elif .model == "iPhone 17 Pro Max" then 3
-              elif (.model | contains("Pro")) then 2
-              elif (.model | startswith("iPhone 17")) then 1
+              if $model == "iPhone 17 Pro" then 4
+              elif $model == "iPhone 17 Pro Max" then 3
+              elif ($model | contains("Pro")) then 2
+              elif ($model | startswith("iPhone 17")) then 1
               else 0
               end
             ),
@@ -236,6 +239,7 @@ jq -n \
   --arg test_package_arn "${test_upload_arn}" \
   --arg device_arn "${selected_device_arn}" \
   --arg run_name "${run_name}" \
+  --arg test_filter "${test_filter}" \
   '{
     projectArn: $project_arn,
     appArn: $app_arn,
@@ -256,7 +260,10 @@ jq -n \
       parameters: {
         app_performance_monitoring: "false"
       }
-    },
+    }
+    + if $test_filter == "" then {}
+      else {filter: $test_filter}
+      end,
     configuration: {
       billingMethod: "METERED"
     },
@@ -319,10 +326,14 @@ download_artifacts() {
   local output_subdirectory="$2"
   local raw_metadata
   local public_metadata
+  local normalized_artifact_type
   local artifact_index=0
 
   raw_metadata="$(mktemp)"
-  public_metadata="${result_directory}/metadata/artifacts-${artifact_type,,}.json"
+  normalized_artifact_type="$(
+    printf '%s' "${artifact_type}" | tr '[:upper:]' '[:lower:]'
+  )"
+  public_metadata="${result_directory}/metadata/artifacts-${normalized_artifact_type}.json"
 
   aws devicefarm list-artifacts \
     --arn "${run_arn}" \
@@ -391,6 +402,9 @@ extract_report \
 extract_report \
   "VT_CLOUD_SUSTAINED_REPORT_BASE64" \
   "${result_directory}/sustained-encoding-summary.json"
+extract_report \
+  "VT_CLOUD_TRANSCODE_REPORT_BASE64" \
+  "${result_directory}/transcode-summary.json"
 
 jq -n \
   --arg run_arn "${run_arn}" \
@@ -435,13 +449,22 @@ if [[ "${run_result}" != "PASSED" ]]; then
   exit 1
 fi
 
-if [[ ! -s "${result_directory}/capability-summary.json" ]]; then
+if [[ -z "${test_filter}" \
+  && ! -s "${result_directory}/capability-summary.json" ]]; then
   echo "错误：测试通过，但未从 Device Farm 日志回收到能力摘要。" >&2
   exit 1
 fi
 
-if [[ ! -s "${result_directory}/sustained-encoding-summary.json" ]]; then
+if [[ -z "${test_filter}" \
+  && ! -s "${result_directory}/sustained-encoding-summary.json" ]]; then
   echo "错误：测试通过，但未从 Device Farm 日志回收到持续硬编摘要。" >&2
+  exit 1
+fi
+
+if [[ ( -z "${test_filter}" \
+  || "${test_filter}" == *"testCloudTranscodePreservesMediaContract"* ) \
+  && ! -s "${result_directory}/transcode-summary.json" ]]; then
+  echo "错误：测试通过，但未从 Device Farm 日志回收到真实转码摘要。" >&2
   exit 1
 fi
 

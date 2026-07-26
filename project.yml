@@ -25,14 +25,16 @@ targets:
       - path: VideoToolboxStudio
         excludes:
           - Resources
-    resources:
       - path: VideoToolboxStudio/Resources/Assets.xcassets
+        buildPhase: resources
+      - path: VideoToolboxStudio/Resources/TestMedia
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.bxwllzz.VideoToolboxStudio
         PRODUCT_NAME: VideoToolboxStudio
         PRODUCT_MODULE_NAME: VideoToolboxStudio
-        MARKETING_VERSION: 1.2.0
+        MARKETING_VERSION: 1.3.0
         CURRENT_PROJECT_VERSION: 1
         INFOPLIST_FILE: VideoToolboxStudio/Resources/Info.plist
         GENERATE_INFOPLIST_FILE: NO

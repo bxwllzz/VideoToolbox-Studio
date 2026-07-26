@@ -84,8 +84,8 @@ final class CapabilityProbeCloudUITests: XCTestCase {
 
             if runNumber < 3 {
                 let rerunButton = app.buttons["sustained-rerun-button"]
-                XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
                 makeHittable(rerunButton, in: app)
+                XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
                 rerunButton.tap()
 
                 let disappeared = XCTNSPredicateExpectation(
@@ -146,8 +146,8 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         )
 
         let rerunButton = app.buttons["sustained-rerun-button"]
-        XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
         makeHittable(rerunButton, in: app)
+        XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
         rerunButton.tap()
 
         let summary = app.staticTexts["sustained-summary"]
@@ -159,6 +159,86 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             summary.label.contains("3/3"),
             "取消后重新创建的编码会话未全部达标。"
         )
+    }
+
+    @MainActor
+    func testCloudTranscodePreservesMediaContract() throws {
+        let app = XCUIApplication()
+        app.launchArguments.append("--cloud-testing")
+        app.launch()
+
+        let openTranscode = app.buttons["open-transcode"]
+        XCTAssertTrue(
+            openTranscode.waitForExistence(timeout: 30),
+            "未找到视频转换入口。"
+        )
+        openTranscode.tap()
+
+        let runButton = app.buttons["cloud-transcode-run"]
+        makeHittable(runButton, in: app)
+        XCTAssertTrue(
+            runButton.waitForExistence(timeout: 30),
+            "未找到云端真实转码入口。"
+        )
+        runButton.tap()
+
+        let importError = app.staticTexts["transcode-import-error"]
+        if importError.waitForExistence(timeout: 2) {
+            XCTFail("云端转码素材不可用：\(importError.label)")
+            return
+        }
+
+        let summary = app.staticTexts["cloud-transcode-summary"]
+        let error = app.staticTexts["cloud-transcode-error"]
+        let progress = app.staticTexts["cloud-transcode-progress"]
+        // SwiftUI Form 会虚拟化屏幕外的行；转码完成后内容高度变化，
+        // 云端结果区可能移出无障碍树。先滚到底部，让状态与结果行实例化。
+        makeHittable(summary, in: app)
+        let deadline = Date().addingTimeInterval(90)
+        while Date() < deadline, !summary.exists, !error.exists {
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        if error.exists {
+            XCTFail("真实视频转码失败：\(error.label)")
+            return
+        }
+        XCTAssertTrue(
+            summary.exists,
+            "真实视频转码没有在 90 秒内完成；"
+                + (progress.exists ? progress.label : "未回收到进度")
+        )
+        let metrics = app.staticTexts["cloud-transcode-metrics"]
+        makeHittable(metrics, in: app)
+        XCTAssertTrue(metrics.waitForExistence(timeout: 30))
+        XCTAssertTrue(
+            summary.label.contains("1/1")
+                && summary.label.contains("保真核验通过"),
+            "真实转码或输出复核没有通过：\(summary.label)"
+        )
+        XCTAssertTrue(
+            metrics.label.contains("300 帧"),
+            "10 秒 30 fps 素材没有完整输出 300 帧：\(metrics.label)"
+        )
+
+        let report: [String: String] = [
+            "schema_version": "1.0",
+            "summary": summary.label,
+            "metrics": metrics.label,
+            "runner_device_model": UIDevice.current.model,
+            "runner_system_name": UIDevice.current.systemName,
+            "runner_system_version": UIDevice.current.systemVersion,
+            "generated_at": ISO8601DateFormatter().string(from: Date()),
+        ]
+        let reportData = try JSONSerialization.data(
+            withJSONObject: report,
+            options: [.sortedKeys]
+        )
+        print("VT_CLOUD_TRANSCODE_REPORT_BASE64=\(reportData.base64EncodedString())")
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "VideoToolbox 真实视频转码结果"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor

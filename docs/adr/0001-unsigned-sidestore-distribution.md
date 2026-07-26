@@ -9,7 +9,7 @@
 
 ## 决策
 
-1. 私有 GitHub 仓库作为代码唯一事实源；
+1. GitHub 仓库作为代码唯一事实源（仓库后续已改为公开）；
 2. GitHub Actions 使用 `macos-26`、Xcode 26.6 和 iOS 26.5 SDK；
 3. XcodeGen 固定为 2.46.0；
 4. 云端只生成无签名 IPA，由 SideStore 在 iPhone 上使用免费 Apple Account 重签；
@@ -22,5 +22,5 @@
 - 首次 SideStore 初始化仍需要电脑；
 - 日常更新可在 iPhone 上完成；
 - 免费签名存在 7 天刷新和 App 数量限制；
-- GitHub 私有 Artifact 需要登录下载并手工导入 SideStore；
+- GitHub Actions Artifact 通常需要从工作流页面下载并手工导入 SideStore；
 - 购买 Apple Developer Program 后再新增 App Store Connect API 密钥和 TestFlight 流程，不复用 Apple Account 密码。

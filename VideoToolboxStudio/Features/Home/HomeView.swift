@@ -19,6 +19,7 @@ struct HomeView: View {
         NavigationStack {
             List {
                 statusSection
+                transcodeSection
                 sustainedEncodingSection
                 capabilitySection
                 buildSection
@@ -37,12 +38,12 @@ struct HomeView: View {
     private var statusSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
-                Label("只读能力探针", systemImage: "waveform.path.ecg.rectangle")
+                Label("专业视频编码", systemImage: "slider.horizontal.3")
                     .font(.title2.bold())
                     .foregroundStyle(.tint)
 
                 Text(
-                    "用合成帧持续验证 H.264 与 HEVC 硬件编码，记录码流、吞吐、延迟、丢帧和实际输出格式。"
+                    "单个或批量转换视频；只改变视频编码与文件体积，其他媒体信息通过直通和输出复核尽量无损保留。"
                 )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -54,6 +55,21 @@ struct HomeView: View {
                 }
             }
             .padding(.vertical, 8)
+        }
+    }
+
+    private var transcodeSection: some View {
+        Section("视频转换") {
+            NavigationLink {
+                TranscodeView(buildReport: report)
+            } label: {
+                Label("单个与批量转换", systemImage: "film.stack")
+            }
+            .accessibilityIdentifier("open-transcode")
+
+            Text("提供保真、均衡、紧凑模板，也可直接控制码率、质量、GOP、B 帧和速度优先级。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 

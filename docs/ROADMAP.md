@@ -1,8 +1,8 @@
 # VideoToolbox Studio 开发路线图
 
-> 文档状态：v1.2
+> 文档状态：v1.3
 > 更新日期：2026-07-26
-> 当前阶段：M2 已通过，下一阶段为 M3
+> 当前阶段：M3 已通过，下一阶段为 M4
 > 目标设备：iPhone 17 Pro / iOS 26.5.2
 > 项目定位：通过 Apple 公共 API 动态探测真实可用的视频编码能力，并提供纯本地、无广告、参数透明的专业转码工具
 
@@ -14,9 +14,10 @@
 - Bundle ID：`io.github.bxwllzz.VideoToolboxStudio`；
 - M0 状态：已通过。真机安装标识 `CE79063C` 在覆盖更新后保持不变，启动次数从 2 增至 4；
 - M1 状态：目标 iPhone 已证明 H.264 1080p、HEVC 1080p、HEVC 4K 的严格硬件会话可创建，且运行时硬件标记为真；
-- 云真机状态：BrowserStack 已在 iPhone 17 Pro / iOS 26.2 完成 M1、M2 回归；正在将默认日常通道切换为 AWS Device Farm；
+- 云真机状态：BrowserStack 已完成 M1、M2 历史回归后停用；AWS Device Farm 的 `main` 与所有者 PR OIDC、真机执行和证据回收均已跑通；iPhone 17 Pro / iOS 26.3.1 已通过 M3 的 300 帧 HEVC、301 个 AAC 样本和保真复核；
 - M2 状态：BrowserStack iPhone 17 Pro 连续三轮完成 60/60 帧编码，三种配置均取得 E2、E4、E5、E6；取消后可重新创建会话；
-- 当前唯一主任务：完成 AWS Device Farm 首次全链路验收，随后开始 M3 真实视频转码纵切。
+- M3 状态：已实现单个/批量转换、模板与专业参数、严格硬编、非视频轨道压缩样本直通、失败清理以及重新读取后的逐项保真复核；
+- 当前唯一主任务：使用明确标记的 10-bit/HDR 真源完成 M4 端到端正确性验证。
 
 ---
 
@@ -28,7 +29,7 @@
 | 能力边界 | 只描述当前设备通过 Apple 公共 API 暴露的能力，不宣称覆盖芯片全部硬件能力 |
 | 开发终端 | 用户主要通过 iPhone 上的 ChatGPT Work 发起、审查和推进开发 |
 | 云端构建 | GitHub Actions（GitHub 自动化工作流）的 macOS runner 负责编译、测试和生成未签名 IPA（iOS App Store Package，iOS 应用安装包） |
-| 云真机回归 | AWS Device Farm 通过 OIDC 自动执行日常回归；BrowserStack 保留为手动备用；目标 iPhone 负责阶段性最终验收 |
+| 云真机回归 | AWS Device Farm 通过 OIDC 自动执行日常回归；BrowserStack 已停用；目标 iPhone 负责阶段性最终验收 |
 | 免费安装 | 接受使用电脑一次性初始化 SideStore；此后由 iPhone 下载 IPA 并用 SideStore 签名、安装和续签 |
 | 付费时机 | 在真机探针、真实转码和竞品对比证明产品价值后，再购买 Apple Developer Program（苹果开发者计划） |
 | 隐私 | 不联网、无账号、无广告、无分析埋点，视频与诊断数据默认只在本机处理 |
@@ -43,7 +44,7 @@
 
 | 内容 | 持久位置 | 说明 |
 |---|---|---|
-| 源代码、测试、工作流 | GitHub 私有仓库 | 项目建立后唯一代码事实源 |
+| 源代码、测试、工作流 | GitHub 公开仓库 | 项目建立后唯一代码事实源 |
 | 路线图、架构决策、验收标准 | 仓库 `docs/` 目录 | 当前先保存本文件；建仓后复制为 `docs/ROADMAP.md` |
 | 真机能力报告 | 仓库外保存，必要时只提交脱敏样本 | 原始报告可能含设备和媒体元数据 |
 | 构建产物 | GitHub Actions Artifact 或 Release | Artifact 有保留期限，不能作为长期归档 |
@@ -65,7 +66,7 @@
 ```text
 iPhone 上向 ChatGPT Work 提需求
         ↓
-Codex 修改 GitHub 私有仓库
+Codex 修改 GitHub 公开仓库
         ↓
 GitHub Actions macOS runner 编译和测试
         ↓
@@ -88,8 +89,8 @@ SideStore 重签、安装或更新
 - 免费 Apple Account（苹果账号）的 provisioning profile（配置描述文件）有效期为 7 天，需要在到期前刷新。
 - 免费账号通常最多同时安装 3 个自签 App，SideStore 本身占用其中 1 个；一周最多注册 10 个 App ID。
 - iOS 升级、设备重置或配对文件偶发失效后，可能需要再次连接电脑替换 pairing file，因此“一次性初始化”不是永久保证。
-- 私有 GitHub 仓库的 Artifact 需要登录后下载，而且通常以 ZIP（ZIP Archive，压缩归档）提供。首版采用“下载 ZIP → 在文件 App 解压 → 将 IPA 导入 SideStore”，不把它包装成一键直装。
-- 若后续需要 SideStore 点击链接安装，必须提供 SideStore 可匿名访问的 IPA 或 AltSource 地址；是否公开二进制文件需另行决策，不能默认把私有构建公开。
+- GitHub Actions 的 Artifact 通常以 ZIP（ZIP Archive，压缩归档）提供。首版采用“下载 ZIP → 在文件 App 解压 → 将 IPA 导入 SideStore”，不把它包装成一键直装。
+- 若后续需要 SideStore 点击链接安装，必须提供可匿名访问的 IPA 或 AltSource 地址；公开源代码不等于默认公开每个构建产物。
 
 ---
 
@@ -115,7 +116,7 @@ SideStore 重签、安装或更新
 
 #### 范围
 
-1. 创建 GitHub 私有仓库并接入 Codex；
+1. 创建 GitHub 仓库并接入 Codex；
 2. 建立最小 SwiftUI 工程；
 3. 使用 XcodeGen 管理工程；
 4. 创建单一 CI（Continuous Integration，持续集成）工作流，完成编译、单元测试和未签名 IPA 打包；
@@ -221,11 +222,12 @@ SideStore 重签、安装或更新
 
 #### 验收
 
-- [ ] 10 秒真实视频可完整转码；
-- [ ] 输出时长、音画同步、方向和播放正常；
-- [ ] 取消后无残留损坏文件；
-- [ ] 输出文件可重新读取并生成实际码流报告；
-- [ ] 失败不会覆盖原视频。
+- [x] 真实视频可完整转码，并支持单个与批量队列；
+- [x] 输出时长、音画轨道、方向、分辨率与容器元数据通过自动复核；
+- [x] 取消或失败后清理不完整输出；
+- [x] 输出文件可重新读取并生成实际码流报告；
+- [x] 失败不会覆盖原视频；
+- [x] 无法保留的轨道或属性会明确失败，不静默丢弃。
 
 ---
 
@@ -373,43 +375,35 @@ HDR 为 High Dynamic Range（高动态范围）。
 
 ## 8. 当前任务队列
 
-### P0：已完成
+### 已完成
 
-1. 创建 GitHub 私有仓库；
-2. 将原 handoff 和本路线图放入 `docs/`；
-3. 完成 SideStore 首次初始化；
-4. 实施 M0，先交付可安装的空壳 App；
-5. 在 iPhone 上完成两次独立版本安装验证。
+1. M0 SideStore 安装与覆盖更新；
+2. M1 只读能力探针；
+3. M2 三轮持续硬编和取消恢复；
+4. M3 单个/批量真实视频转换、模板、专业参数和保真报告。
 
-### P1：现在执行
+### 现在执行
 
-1. 实施 M1 只读探针；
-2. 导出第一份真机能力报告；
-3. 根据实际编码器列表收敛 M2 测试矩阵。
-
-### P2：M1 通过后
-
-1. 实施 M2 多帧持续测试；
-2. 实施 M3 真实视频纵切；
-3. 再决定是否投入 HDR、专业参数和产品 UI。
+1. M4 10-bit/HDR 真源闭环；
+2. 在 AWS iPhone 17 Pro 上持续回归真实转码合同；
+3. 在目标 iPhone 17 Pro / iOS 26.5.2 上复核 HDR、性能和热状态。
 
 ---
 
 ## 9. 下一次开发会话的启动指令
 
 ```text
-阅读 docs/ROADMAP.md 和 docs/HANDOFF.md。
+阅读 docs/ROADMAP.md、docs/HANDOFF.md 和最近一次 GitHub Actions 结果。
 
-M0 已通过，当前只执行 M1 只读能力探针，不读取用户媒体，不写入编码属性。
+M0～M3 已通过，当前只执行 M4 10-bit/HDR 真源闭环。
 
 交付：
-1. `VTCopyVideoEncoderList` 编码器清单及原始字典；
-2. H.264 1080p、HEVC 1080p、HEVC 4K 的会话前预检；
-3. 严格要求硬件的 `VTCompressionSession`；
-4. 实际会话支持属性与硬件运行时标记；
-5. 分级显示 E1、E2、E3、E5，不把缺失的 E4 伪装为通过；
-6. 导出版本化 `capability-report.json`；
-7. GitHub Actions 编译、单元测试和无签名 IPA。
+1. 具有明确 BT.2020、PQ/HLG 与 HDR 静态元数据的无版权真源；
+2. 输入解码像素格式和位深证据；
+3. HEVC Main10 严格硬编与属性状态；
+4. 输出重新读取后的位深、色域、传递函数、矩阵与 HDR 元数据；
+5. 不支持时明确拒绝，不静默转 SDR；
+6. 云真机证据和目标 iPhone 阶段性复核。
 
 约束：
 - 不使用 FFmpeg；
@@ -421,7 +415,7 @@ M0 已通过，当前只执行 M1 只读能力探针，不读取用户媒体，�
 - 每个阶段提交独立 commit；
 - CI 通过后再交付 IPA。
 
-首份真机报告回传前，不进入 M2 多帧编码和 M3 真实视频纵切。
+不提前进入竞品对比；先把 HDR 保真证据闭环。
 ```
 
 ---

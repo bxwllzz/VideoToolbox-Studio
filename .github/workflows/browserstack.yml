@@ -98,8 +98,9 @@ jobs:
         env:
           BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
           BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          BROWSERSTACK_ONLY_TESTING: CapabilityProbeCloudUITests/testCloudTranscodePreservesMediaContract
         run: |
-          scripts/run-browserstack-xcuitest.sh \
+          bash scripts/run-browserstack-xcuitest.sh \
             build/browserstack/package/VideoToolboxStudio.ipa \
             build/browserstack/package/VideoToolboxStudioCloudTests.zip \
             build/browserstack/results

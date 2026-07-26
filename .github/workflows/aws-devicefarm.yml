@@ -39,10 +39,17 @@ env:
   AWS_DEVICE_FARM_PROJECT_ARN: arn:aws:devicefarm:us-west-2:247332612374:project:36ab8700-d09f-42fa-ad15-65df8d06958b
   AWS_DEVICE_FARM_ROLE_ARN: arn:aws:iam::247332612374:role/bxwllzz@github
   AWS_DEVICE_FARM_MIN_IOS_MAJOR: "26"
+  AWS_DEVICE_FARM_TEST_FILTER: ${{ github.event_name == 'pull_request' && 'CapabilityProbeCloudUITests/testCloudTranscodePreservesMediaContract' || '' }}
 
 jobs:
   cloud-device-test:
     name: 构建并执行 iOS 真机编码回归
+    if: >-
+      github.event_name != 'pull_request' ||
+      (
+        github.event.pull_request.head.repo.id == github.event.repository.id &&
+        github.event.pull_request.user.id == 4355526
+      )
     runs-on: macos-26
     timeout-minutes: 60
 
@@ -91,6 +98,11 @@ jobs:
             find "${products}" -maxdepth 2 -print >&2
             exit 1
           fi
+          if [[ ! -f "${app_path}/CloudTranscodeSample.mov" ]]; then
+            echo "错误：测试素材没有进入 App Bundle，拒绝消耗真机时间。" >&2
+            find "${app_path}" -maxdepth 2 -print >&2
+            exit 1
+          fi
 
           mkdir -p build/aws-devicefarm/package/Payload
           ditto "${app_path}" build/aws-devicefarm/package/Payload/VideoToolboxStudio.app
@@ -118,8 +130,61 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: 记录 OIDC 信任声明
+        run: |
+          set -euo pipefail
+          response="$(
+            curl \
+              --silent \
+              --show-error \
+              --fail-with-body \
+              --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com"
+          )"
+          oidc_token="$(jq -r '.value' <<<"${response}")"
+          export OIDC_TOKEN_FOR_CLAIMS="${oidc_token}"
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          from pathlib import Path
+
+          token = os.environ["OIDC_TOKEN_FOR_CLAIMS"]
+          payload = token.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          allowed = {
+              key: claims.get(key)
+              for key in (
+                  "aud",
+                  "sub",
+                  "actor",
+                  "actor_id",
+                  "repository",
+                  "repository_id",
+                  "repository_owner",
+                  "repository_owner_id",
+                  "ref",
+                  "sha",
+                  "workflow",
+                  "workflow_ref",
+                  "job_workflow_ref",
+                  "job",
+                  "environment",
+              )
+          }
+          output = Path("build/aws-devicefarm/logs/oidc-claims.json")
+          output.write_text(
+              json.dumps(allowed, ensure_ascii=False, indent=2, sort_keys=True)
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          unset OIDC_TOKEN_FOR_CLAIMS oidc_token response
+          jq '{aud, sub, actor, actor_id, repository, repository_id, repository_owner, repository_owner_id, ref, workflow, workflow_ref, job_workflow_ref, job, environment}' \
+            build/aws-devicefarm/logs/oidc-claims.json
+
       - name: 通过 OIDC 获取 AWS 临时凭据
-        if: github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           aws-region: ${{ env.AWS_REGION }}
@@ -129,7 +194,6 @@ jobs:
           unset-current-credentials: true
 
       - name: 验证 AWS 身份与项目权限
-        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           aws sts get-caller-identity >/dev/null
@@ -140,7 +204,6 @@ jobs:
           echo "OIDC 临时身份与 Device Farm 项目读取权限均已验证。"
 
       - name: 运行 AWS Device Farm 真机测试
-        if: github.event_name != 'pull_request'
         run: |
           bash scripts/run-aws-devicefarm-xcuitest.sh \
             build/aws-devicefarm/package/VideoToolboxStudio.ipa \
@@ -148,7 +211,7 @@ jobs:
             build/aws-devicefarm/results
 
       - name: 上传 AWS 真机证据
-        if: ${{ always() && github.event_name != 'pull_request' }}
+        if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: aws-devicefarm-${{ github.run_number }}-${{ github.sha }}
@@ -158,8 +221,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+
       - name: 发布 AWS 真机提交状态
-        if: ${{ always() && github.event_name != 'pull_request' }}
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_STATUS: ${{ job.status }}
