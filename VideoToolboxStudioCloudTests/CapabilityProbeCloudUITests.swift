@@ -293,8 +293,10 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "没有显示本机只读或不支持的 MaxFrameDelayCount。"
         )
         XCTAssertFalse(
-            readOnlyProperty.isEnabled,
-            "本机不可写的 MaxFrameDelayCount 没有置灰。"
+            app.textFields["native-property-MaxFrameDelayCount"].exists
+                || app.switches["native-property-MaxFrameDelayCount"].exists
+                || app.buttons["native-property-MaxFrameDelayCount"].exists,
+            "本机不可写的 MaxFrameDelayCount 被暴露成了可编辑控件。"
         )
         let nativeReadOnlyPropertyLabel = readOnlyProperty.label
         XCTAssertTrue(
