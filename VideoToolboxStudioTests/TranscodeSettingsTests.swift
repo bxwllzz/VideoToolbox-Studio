@@ -212,6 +212,21 @@ final class TranscodeSettingsTests: XCTestCase {
         )
     }
 
+    func test无数值时间戳样本只在最终排空阶段写入() {
+        XCTAssertTrue(
+            VideoTranscoder.shouldDeferPassthroughSample(
+                presentationTime: .invalid,
+                through: .zero
+            )
+        )
+        XCTAssertFalse(
+            VideoTranscoder.shouldDeferPassthroughSample(
+                presentationTime: .invalid,
+                through: .positiveInfinity
+            )
+        )
+    }
+
     func test只读回读区分当前值空值和查询失败() {
         XCTAssertEqual(
             NativeCompressionPropertyReadback(

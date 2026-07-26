@@ -1452,6 +1452,19 @@ enum VideoTranscoder {
         }
     }
 
+    static func shouldDeferPassthroughSample(
+        presentationTime: CMTime,
+        through limit: CMTime
+    ) -> Bool {
+        guard limit != .positiveInfinity else {
+            return false
+        }
+        guard presentationTime.isNumeric else {
+            return true
+        }
+        return CMTimeCompare(presentationTime, limit) > 0
+    }
+
     private static func drainRemainingPassthroughSamples(
         _ channels: [PassthroughChannel],
         writer: AVAssetWriter,
@@ -2397,24 +2410,24 @@ private final class PassthroughChannel {
             return false
         }
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
-        guard presentationTime.isNumeric else {
-            throw TranscodeError.cannotPreserveTrack(
-                "\(writerInput.mediaType.rawValue)：样本时间戳无效"
-            )
+        if presentationTime.isNumeric {
+            if let writerSessionStartTime,
+               writerSessionStartTime.isNumeric,
+               CMTimeCompare(presentationTime, writerSessionStartTime) < 0
+            {
+                throw TranscodeError.cannotPreserveTrack(
+                    "\(writerInput.mediaType.rawValue)：样本时间戳 "
+                        + "\(CMTimeGetSeconds(presentationTime)) 早于写入会话起点 "
+                        + "\(CMTimeGetSeconds(writerSessionStartTime))"
+                )
+            }
         }
-        if let writerSessionStartTime,
-           writerSessionStartTime.isNumeric,
-           CMTimeCompare(presentationTime, writerSessionStartTime) < 0
-        {
-            throw TranscodeError.cannotPreserveTrack(
-                "\(writerInput.mediaType.rawValue)：样本时间戳 "
-                    + "\(CMTimeGetSeconds(presentationTime)) 早于写入会话起点 "
-                    + "\(CMTimeGetSeconds(writerSessionStartTime))"
-            )
-        }
-        if limit != .positiveInfinity,
-           CMTimeCompare(presentationTime, limit) > 0
-        {
+        if VideoTranscoder.shouldDeferPassthroughSample(
+            presentationTime: presentationTime,
+            through: limit
+        ) {
+            // 尚未到达交错点；无数值 PTS 的编解码预卷或尾样本也要等到
+            // 最终排空，再交给 AVAssetWriter 原样承载。
             return false
         }
         guard writerInput.isReadyForMoreMediaData else {
