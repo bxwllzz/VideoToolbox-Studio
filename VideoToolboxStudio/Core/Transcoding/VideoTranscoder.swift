@@ -259,9 +259,30 @@ enum VideoTranscoder {
         }
         reader.add(videoOutput)
 
+        let dimensions = try await videoTrack.load(.naturalSize)
+        let width = Int32(abs(dimensions.width.rounded()))
+        let height = Int32(abs(dimensions.height.rounded()))
+        guard width > 0, height > 0 else {
+            throw TranscodeError.unsupportedInput("视频分辨率无效。")
+        }
+        var videoFormatHint: CMVideoFormatDescription?
+        let formatHintStatus = CMVideoFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            codecType: resolvedSettings.codecType,
+            width: width,
+            height: height,
+            extensions: nil,
+            formatDescriptionOut: &videoFormatHint
+        )
+        guard formatHintStatus == noErr, let videoFormatHint else {
+            throw TranscodeError.writerFailed(
+                "无法创建压缩视频格式提示：\(formatHintStatus)"
+            )
+        }
         let videoWriterInput = AVAssetWriterInput(
             mediaType: .video,
-            outputSettings: nil
+            outputSettings: nil,
+            sourceFormatHint: videoFormatHint
         )
         videoWriterInput.expectsMediaDataInRealTime = false
         videoWriterInput.transform = try await videoTrack.load(.preferredTransform)
@@ -343,14 +364,6 @@ enum VideoTranscoder {
 
         let callbackContext = TranscodeCallbackContext()
         var compressionSession: VTCompressionSession?
-        let dimensions = try await videoTrack.load(.naturalSize)
-        let width = Int32(abs(dimensions.width.rounded()))
-        let height = Int32(abs(dimensions.height.rounded()))
-        guard width > 0, height > 0 else {
-            reader.cancelReading()
-            writer.cancelWriting()
-            throw TranscodeError.unsupportedInput("视频分辨率无效。")
-        }
 
         let encoderSpecification = [
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true,
