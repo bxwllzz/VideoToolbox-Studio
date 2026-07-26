@@ -79,7 +79,7 @@ AVAssetWriter
 ```text
 iPhone 上的 ChatGPT Work 提出任务
         ↓
-Codex 修改 GitHub 私有仓库
+Codex 修改 GitHub 公开仓库
         ↓
 GitHub Actions 的 macOS runner 编译和测试
         ↓
@@ -214,7 +214,7 @@ P5 只处理 10-bit/HDR 真源闭环：
 
 ## 11. 工程质量规则
 
-- 代码、测试、工作流和版本历史以 GitHub 私有仓库为唯一事实源；
+- 代码、测试、工作流和版本历史以 GitHub 仓库为唯一事实源；
 - 每个阶段形成独立、可回退的提交；
 - 每次合并前编译和单元测试必须通过；
 - 不引入与当前阶段无关的第三方运行时依赖；
@@ -227,12 +227,14 @@ P5 只处理 10-bit/HDR 真源闭环：
 ## 12. 当前状态
 
 - [x] SideStore 安装与覆盖升级闭环；
-- [x] GitHub 私有仓库、CI 与无签名 IPA 构建；
+- [x] GitHub 公开仓库、CI 与无签名 IPA 构建；
 - [x] P2 只读能力探针；
 - [x] P3 三轮持续硬编与取消恢复；
 - [x] P4 单个/批量真实视频转换与保真复核；
-- [~] AWS Device Farm 工作流：App 与 XCUITest 包构建已通过，首次 `main` 实跑仍受 IAM OIDC 信任策略阻挡；
-- [x] BrowserStack：保留为手动备用真机通道；
+- [x] AWS Device Farm：`main` 与所有者 PR 的 OIDC、真机执行和证据回收均已跑通；
+- [x] P4 AWS 真机合同：300 帧 HEVC、301 个 AAC 样本与逐项保真复核通过；
+- [x] AWS iPhone 17 Pro / iOS 26.3.1：同一合同通过，计费 1.00 真机分钟；
+- [x] BrowserStack：额度耗尽后停用，工作流文件仅保留历史配置；
 - [ ] P5 10-bit/HDR 真源闭环；
 - [ ] 目标 iPhone 17 Pro / iOS 26.5.2 的阶段性最终复核。
 

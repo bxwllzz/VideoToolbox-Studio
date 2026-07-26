@@ -45,8 +45,8 @@ project.yml               XcodeGen 工程定义
 
 - `持续集成`：生成 Xcode 工程，在 iPhone 17 Pro / iOS 26.5 模拟器上编译和运行单元测试；
 - `构建无签名 IPA`：为真机编译无签名 App，输出 IPA、构建信息、日志和 SHA-256 校验值。
-- `AWS Device Farm 真机回归`：PR 先验证真机包构建，合入 `main` 后通过 OIDC 自动上传、重签、运行并回收证据；
-- `BrowserStack 真机回归`：保留为手动备用通道。
+- `AWS Device Farm 真机回归`：所有者从同仓库分支发起的 PR 通过 OIDC 运行单个真实转码用例，`main` 运行完整真机套件；
+- `BrowserStack 真机回归`：已停用；工作流文件仅保留历史配置，不再触发。
 
 完整手机端安装步骤见 [SideStore 安装说明](docs/SIDESTORE_INSTALL.md)。
 默认云真机通道的身份边界、触发规则与结果口径见 [AWS Device Farm 真机回归](docs/AWS_DEVICE_FARM.md)；备用通道见 [BrowserStack 云真机回归](docs/BROWSERSTACK.md)。

@@ -14,7 +14,7 @@
 - Bundle ID：`io.github.bxwllzz.VideoToolboxStudio`；
 - M0 状态：已通过。真机安装标识 `CE79063C` 在覆盖更新后保持不变，启动次数从 2 增至 4；
 - M1 状态：目标 iPhone 已证明 H.264 1080p、HEVC 1080p、HEVC 4K 的严格硬件会话可创建，且运行时硬件标记为真；
-- 云真机状态：BrowserStack 已在 iPhone 17 Pro / iOS 26.x 完成 M1、M2 与 M3 回归；AWS Device Farm 的 App/XCUITest 打包已通过，首次 `main` 实跑仍需修正 IAM OIDC 信任；
+- 云真机状态：BrowserStack 已完成 M1、M2 历史回归后停用；AWS Device Farm 的 `main` 与所有者 PR OIDC、真机执行和证据回收均已跑通；iPhone 17 Pro / iOS 26.3.1 已通过 M3 的 300 帧 HEVC、301 个 AAC 样本和保真复核；
 - M2 状态：BrowserStack iPhone 17 Pro 连续三轮完成 60/60 帧编码，三种配置均取得 E2、E4、E5、E6；取消后可重新创建会话；
 - M3 状态：已实现单个/批量转换、模板与专业参数、严格硬编、非视频轨道压缩样本直通、失败清理以及重新读取后的逐项保真复核；
 - 当前唯一主任务：使用明确标记的 10-bit/HDR 真源完成 M4 端到端正确性验证。
@@ -29,7 +29,7 @@
 | 能力边界 | 只描述当前设备通过 Apple 公共 API 暴露的能力，不宣称覆盖芯片全部硬件能力 |
 | 开发终端 | 用户主要通过 iPhone 上的 ChatGPT Work 发起、审查和推进开发 |
 | 云端构建 | GitHub Actions（GitHub 自动化工作流）的 macOS runner 负责编译、测试和生成未签名 IPA（iOS App Store Package，iOS 应用安装包） |
-| 云真机回归 | AWS Device Farm 通过 OIDC 自动执行日常回归；BrowserStack 保留为手动备用；目标 iPhone 负责阶段性最终验收 |
+| 云真机回归 | AWS Device Farm 通过 OIDC 自动执行日常回归；BrowserStack 已停用；目标 iPhone 负责阶段性最终验收 |
 | 免费安装 | 接受使用电脑一次性初始化 SideStore；此后由 iPhone 下载 IPA 并用 SideStore 签名、安装和续签 |
 | 付费时机 | 在真机探针、真实转码和竞品对比证明产品价值后，再购买 Apple Developer Program（苹果开发者计划） |
 | 隐私 | 不联网、无账号、无广告、无分析埋点，视频与诊断数据默认只在本机处理 |
@@ -44,7 +44,7 @@
 
 | 内容 | 持久位置 | 说明 |
 |---|---|---|
-| 源代码、测试、工作流 | GitHub 私有仓库 | 项目建立后唯一代码事实源 |
+| 源代码、测试、工作流 | GitHub 公开仓库 | 项目建立后唯一代码事实源 |
 | 路线图、架构决策、验收标准 | 仓库 `docs/` 目录 | 当前先保存本文件；建仓后复制为 `docs/ROADMAP.md` |
 | 真机能力报告 | 仓库外保存，必要时只提交脱敏样本 | 原始报告可能含设备和媒体元数据 |
 | 构建产物 | GitHub Actions Artifact 或 Release | Artifact 有保留期限，不能作为长期归档 |
@@ -66,7 +66,7 @@
 ```text
 iPhone 上向 ChatGPT Work 提需求
         ↓
-Codex 修改 GitHub 私有仓库
+Codex 修改 GitHub 公开仓库
         ↓
 GitHub Actions macOS runner 编译和测试
         ↓
@@ -89,8 +89,8 @@ SideStore 重签、安装或更新
 - 免费 Apple Account（苹果账号）的 provisioning profile（配置描述文件）有效期为 7 天，需要在到期前刷新。
 - 免费账号通常最多同时安装 3 个自签 App，SideStore 本身占用其中 1 个；一周最多注册 10 个 App ID。
 - iOS 升级、设备重置或配对文件偶发失效后，可能需要再次连接电脑替换 pairing file，因此“一次性初始化”不是永久保证。
-- 私有 GitHub 仓库的 Artifact 需要登录后下载，而且通常以 ZIP（ZIP Archive，压缩归档）提供。首版采用“下载 ZIP → 在文件 App 解压 → 将 IPA 导入 SideStore”，不把它包装成一键直装。
-- 若后续需要 SideStore 点击链接安装，必须提供 SideStore 可匿名访问的 IPA 或 AltSource 地址；是否公开二进制文件需另行决策，不能默认把私有构建公开。
+- GitHub Actions 的 Artifact 通常以 ZIP（ZIP Archive，压缩归档）提供。首版采用“下载 ZIP → 在文件 App 解压 → 将 IPA 导入 SideStore”，不把它包装成一键直装。
+- 若后续需要 SideStore 点击链接安装，必须提供可匿名访问的 IPA 或 AltSource 地址；公开源代码不等于默认公开每个构建产物。
 
 ---
 
@@ -116,7 +116,7 @@ SideStore 重签、安装或更新
 
 #### 范围
 
-1. 创建 GitHub 私有仓库并接入 Codex；
+1. 创建 GitHub 仓库并接入 Codex；
 2. 建立最小 SwiftUI 工程；
 3. 使用 XcodeGen 管理工程；
 4. 创建单一 CI（Continuous Integration，持续集成）工作流，完成编译、单元测试和未签名 IPA 打包；
@@ -385,7 +385,7 @@ HDR 为 High Dynamic Range（高动态范围）。
 ### 现在执行
 
 1. M4 10-bit/HDR 真源闭环；
-2. 修正 AWS IAM OIDC 信任策略并完成首次 Device Farm 实跑；
+2. 在 AWS iPhone 17 Pro 上持续回归真实转码合同；
 3. 在目标 iPhone 17 Pro / iOS 26.5.2 上复核 HDR、性能和热状态。
 
 ---

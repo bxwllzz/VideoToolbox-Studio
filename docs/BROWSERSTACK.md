@@ -1,6 +1,6 @@
 # BrowserStack 备用云真机回归
 
-BrowserStack 已完成 M1、M2 的日常功能回归和硬件能力筛查。AWS Device Farm 接入后，本工作流仅作为手动备用通道，不能替代目标设备 iPhone 17 Pro / iOS 26.5.2 的最终性能、热状态与 HDR 验收。
+BrowserStack 已完成 M1、M2 的历史功能回归和硬件能力筛查。免费额度耗尽后该通道已停用，工作流文件仅保留历史配置；后续真机回归统一使用 AWS Device Farm。
 
 ## 凭据
 
@@ -24,9 +24,9 @@ BrowserStack 已完成 M1、M2 的日常功能回归和硬件能力筛查。AWS 
 
 ## 触发规则
 
-- 仅从 Actions 页面手动触发 `BrowserStack 真机回归`；
 - PR 和 `main` 推送均不自动消耗 BrowserStack 真机分钟；
-- AWS Device Farm 暂时不可用或需要跨供应商复核时再手动执行。
+- 当前也不从 Actions 页面手动触发；
+- 若未来恢复额度，必须由用户重新明确启用。
 
 ## 结果口径
 
