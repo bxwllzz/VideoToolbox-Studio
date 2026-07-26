@@ -229,12 +229,14 @@ struct VideoLibraryView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Button("取消", role: .cancel) {
+                    store.cancelPreparation()
                     preparationTask?.cancel()
                 }
             }
             .padding(24)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
         }
+        .accessibilityIdentifier("video-preparation-overlay")
     }
 
     private func select(_ item: PhotoVideoItem) {
@@ -348,29 +350,53 @@ private struct VideoLibraryCell: View {
     }
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(Color(uiColor: .secondarySystemBackground))
+        GeometryReader { proxy in
+            ZStack {
+                Rectangle()
+                    .fill(Color(uiColor: .secondarySystemBackground))
 
-            if let image = model.image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                ProgressView()
+                if let image = model.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(
+                            width: proxy.size.width,
+                            height: proxy.size.height
+                        )
+                        .clipped()
+                } else {
+                    ProgressView()
+                }
+
+                metadataOverlay
+                    .frame(
+                        width: proxy.size.width,
+                        height: proxy.size.height
+                    )
+
+                if isSelecting {
+                    selectionIndicator
+                        .padding(6)
+                        .frame(
+                            width: proxy.size.width,
+                            height: proxy.size.height,
+                            alignment: .topTrailing
+                        )
+                }
             }
-
-            metadataOverlay
-
-            if isSelecting {
-                selectionIndicator
-                    .padding(6)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .overlay {
+                if selectionIndex != nil {
+                    Rectangle()
+                        .strokeBorder(Color.accentColor, lineWidth: 3)
+                }
             }
         }
         .aspectRatio(1, contentMode: .fit)
         .clipped()
         .contentShape(Rectangle())
+        .animation(.easeInOut(duration: 0.15), value: isSelecting)
+        .animation(.easeInOut(duration: 0.15), value: selectionIndex)
         .task(id: item.id) {
             model.load(
                 targetSize: CGSize(
@@ -384,6 +410,7 @@ private struct VideoLibraryCell: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(selectionAccessibilityValue)
         .accessibilityAddTraits(selectionIndex == nil ? [] : .isSelected)
     }
 
@@ -425,11 +452,11 @@ private struct VideoLibraryCell: View {
             Circle()
                 .fill(
                     selectionIndex == nil
-                        ? Color.black.opacity(0.45)
+                        ? Color.black.opacity(0.58)
                         : Color.accentColor
                 )
             Circle()
-                .stroke(.white, lineWidth: 1.5)
+                .stroke(.white, lineWidth: 2)
             if let selectionIndex {
                 Text("\(selectionIndex)")
                     .font(.caption2.bold())
@@ -437,6 +464,7 @@ private struct VideoLibraryCell: View {
             }
         }
         .frame(width: 24, height: 24)
+        .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
     }
 
     private func metadataText(_ text: String) -> some View {
@@ -485,6 +513,16 @@ private struct VideoLibraryCell: View {
             codecText,
             bitRateText,
         ].joined(separator: "，")
+    }
+
+    private var selectionAccessibilityValue: String {
+        guard isSelecting else {
+            return ""
+        }
+        guard let selectionIndex else {
+            return "未选择"
+        }
+        return "已选择，第 \(selectionIndex) 项"
     }
 }
 

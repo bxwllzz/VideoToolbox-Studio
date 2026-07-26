@@ -51,6 +51,7 @@ final class PhotoVideoLibraryStore: NSObject, ObservableObject {
     @Published private(set) var cloudTestSeedError: String?
 
     private var hasRegisteredForChanges = false
+    private var activePreparationID: UUID?
 
     var sections: [PhotoVideoSection] {
         let calendar = Calendar.autoupdatingCurrent
@@ -119,10 +120,11 @@ final class PhotoVideoLibraryStore: NSObject, ObservableObject {
             throw PhotoVideoImportError.selectionUnavailable
         }
 
+        let preparationID = UUID()
+        activePreparationID = preparationID
         preparationProgress = 0
         defer {
-            preparationProgress = nil
-            preparationTitle = nil
+            finishPreparation(id: preparationID)
         }
 
         var sources: [TranscodeSource] = []
@@ -138,15 +140,42 @@ final class PhotoVideoLibraryStore: NSObject, ObservableObject {
             ) { [weak self] itemProgress in
                 Task { @MainActor in
                     let completed = Double(index)
-                    self?.preparationProgress =
-                        (completed + itemProgress) / Double(totalCount)
+                    self?.updatePreparationProgress(
+                        (completed + itemProgress) / Double(totalCount),
+                        id: preparationID
+                    )
                 }
             }
             try Task.checkCancellation()
             sources.append(source)
-            preparationProgress = Double(index + 1) / Double(totalCount)
+            updatePreparationProgress(
+                Double(index + 1) / Double(totalCount),
+                id: preparationID
+            )
         }
         return sources
+    }
+
+    func cancelPreparation() {
+        activePreparationID = nil
+        preparationProgress = nil
+        preparationTitle = nil
+    }
+
+    private func updatePreparationProgress(_ value: Double, id: UUID) {
+        guard activePreparationID == id else {
+            return
+        }
+        preparationProgress = min(1, max(0, value))
+    }
+
+    private func finishPreparation(id: UUID) {
+        guard activePreparationID == id else {
+            return
+        }
+        activePreparationID = nil
+        preparationProgress = nil
+        preparationTitle = nil
     }
 
     private func registerForChangesIfNeeded() {
