@@ -72,18 +72,26 @@ final class CapabilityProbeCloudUITests: XCTestCase {
 
         let summary = app.staticTexts["sustained-summary"]
         var runs: [[String: String]] = []
+        var lastSummaryLabel = ""
 
         for runNumber in 1...3 {
+            let rerunButton = app.buttons["sustained-rerun-button"]
             XCTAssertTrue(
-                summary.waitForExistence(timeout: 240),
-                "第 \(runNumber) 轮多帧持续硬编未在 240 秒内完成。"
+                waitForSustainedCompletion(
+                    rerunButton: rerunButton,
+                    in: app,
+                    timeout: 90
+                ),
+                "第 \(runNumber) 轮多帧持续硬编未在 90 秒内完成。"
             )
+            makeHittableFromBelow(summary, in: app)
+            XCTAssertTrue(summary.waitForExistence(timeout: 30))
+            lastSummaryLabel = summary.label
 
             let result = try sustainedResult(in: app, runNumber: runNumber)
             runs.append(result)
 
             if runNumber < 3 {
-                let rerunButton = app.buttons["sustained-rerun-button"]
                 makeHittable(rerunButton, in: app)
                 XCTAssertTrue(rerunButton.waitForExistence(timeout: 30))
                 rerunButton.tap()
@@ -102,7 +110,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
 
         let report: [String: Any] = [
             "schema_version": "1.0",
-            "summary": normalizedSummary(summary.label, expected: "3/3"),
+            "summary": normalizedSummary(lastSummaryLabel, expected: "3/3"),
             "run_count": runs.count,
             "runs": runs,
             "runner_device_model": UIDevice.current.model,
@@ -255,12 +263,13 @@ final class CapabilityProbeCloudUITests: XCTestCase {
 
         for element in [
             h264Evidence,
-            hevc1080Evidence,
-            hevc4KEvidence,
             h264Metrics,
+            hevc1080Evidence,
             hevc1080Metrics,
+            hevc4KEvidence,
             hevc4KMetrics,
         ] {
+            makeHittable(element, in: app)
             XCTAssertTrue(element.waitForExistence(timeout: 30))
         }
 
@@ -293,6 +302,33 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         for _ in 0..<8 where !element.isHittable {
             app.swipeUp()
         }
+    }
+
+    @MainActor
+    private func makeHittableFromBelow(
+        _ element: XCUIElement,
+        in app: XCUIApplication
+    ) {
+        for _ in 0..<8 where !element.isHittable {
+            app.swipeDown()
+        }
+    }
+
+    @MainActor
+    private func waitForSustainedCompletion(
+        rerunButton: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            makeHittable(rerunButton, in: app)
+            if rerunButton.exists {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        return false
     }
 
     private func normalizedSummary(_ label: String, expected: String) -> String {
