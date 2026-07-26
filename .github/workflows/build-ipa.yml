@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - ipa/pr7-3331a6e
 
 permissions:
   contents: read
