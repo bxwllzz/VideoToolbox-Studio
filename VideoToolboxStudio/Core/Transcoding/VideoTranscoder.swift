@@ -939,209 +939,22 @@ enum VideoTranscoder {
             callbackContext.clearOutputRoute()
             multiPassResources.close()
         }
-        var compressionSession: VTCompressionSession?
-        let encoderSpecification = [
-            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true,
-        ] as CFDictionary
-        let imageBufferAttributes = [
-            kCVPixelBufferPixelFormatTypeKey as String: resolvedSettings.pixelFormat,
-            kCVPixelBufferWidthKey as String: width,
-            kCVPixelBufferHeightKey as String: height,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as NSDictionary,
-        ] as CFDictionary
-        let sessionStatus = VTCompressionSessionCreate(
-            allocator: nil,
-            width: width,
-            height: height,
-            codecType: resolvedSettings.codecType,
-            encoderSpecification: encoderSpecification,
-            imageBufferAttributes: imageBufferAttributes,
-            compressedDataAllocator: nil,
-            outputCallback: transcodeOutputCallback,
-            refcon: Unmanaged.passUnretained(callbackContext).toOpaque(),
-            compressionSessionOut: &compressionSession
-        )
-        guard sessionStatus == noErr, let compressionSession else {
-            throw TranscodeError.compressionSessionFailed(sessionStatus)
-        }
-        var compressionSessionIsInvalidated = false
-        defer {
-            if !compressionSessionIsInvalidated {
-                VTCompressionSessionInvalidate(compressionSession)
-            }
-        }
-        let diagnosticsMonitor = RuntimeDiagnosticsMonitor(
-            session: compressionSession,
-            callback: diagnostics
-        )
-
-        var propertyWrites = try configure(
-            compressionSession,
-            settings: resolvedSettings,
-            sourceColor: sourceColor
-        )
-        let multiPassSetStatus = VTSessionSetProperty(
-            compressionSession,
-            key: kVTCompressionPropertyKey_MultiPassStorage,
-            value: multiPassResources.storage
-        )
-        let multiPassWrite = PropertyWriteResult(
-            key: "MultiPassStorage",
-            requestedValue: .string("VTMultiPassStorage"),
-            status: APICallResult(
-                function: "VTSessionSetProperty(MultiPassStorage)",
-                status: multiPassSetStatus
-            )
-        )
-        propertyWrites.append(multiPassWrite)
-        guard multiPassSetStatus == noErr else {
-            throw MultiPassUnavailable(propertyWrite: multiPassWrite)
-        }
-
-        let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(
-            compressionSession
-        )
-        guard prepareStatus == noErr else {
-            throw MultiPassUnavailable(
-                propertyWrite: multiPassPropertyWrite(
-                    function:
-                        "VTCompressionSessionPrepareToEncodeFrames(MultiPass)",
-                    status: prepareStatus
-                )
-            )
-        }
-        reportStage("multipass-prepared", progress: 0.03, callback: progress)
-        diagnosticsMonitor.capture(
-            stage: "multipass-prepared",
-            progress: 0.03
-        )
-
-        let beginStatus = VTCompressionSessionBeginPass(
-            compressionSession,
-            flags: [],
-            nil
-        )
-        guard beginStatus == noErr else {
-            throw MultiPassUnavailable(
-                propertyWrite: multiPassPropertyWrite(
-                    function: "VTCompressionSessionBeginPass",
-                    status: beginStatus
-                )
-            )
-        }
-        let firstPass = try encodeVideoPass(
+        let compressionResult = try runMultiPassCompression(
             asset: asset,
             videoTrack: videoTrack,
-            compressionSession: compressionSession,
             resolvedSettings: resolvedSettings,
+            sourceColor: sourceColor,
             cancellationToken: cancellationToken,
-            timeRange: timeRange,
-            allowedTimeRanges: nil,
-            progressStart: 0.03,
-            progressEnd: 0.46,
             sourceDuration: sourceDuration,
+            timeRange: timeRange,
             sessionStartTime: sessionStartTime,
-            diagnosticsMonitor: diagnosticsMonitor,
+            width: width,
+            height: height,
+            resources: multiPassResources,
+            callbackContext: callbackContext,
+            diagnostics: diagnostics,
             progress: progress
         )
-        try completeCompressionPass(compressionSession)
-        try callbackContext.throwIfFailed()
-
-        var furtherPassesRequested = DarwinBoolean(false)
-        let endFirstStatus = VTCompressionSessionEndPass(
-            compressionSession,
-            furtherPassesRequestedOut: &furtherPassesRequested,
-            nil
-        )
-        guard endFirstStatus == noErr else {
-            throw TranscodeError.frameEncodingFailed(endFirstStatus)
-        }
-
-        var passCount = 1
-        if furtherPassesRequested.boolValue {
-            var rangeCount: CMItemCount = 0
-            var rangePointer: UnsafePointer<CMTimeRange>?
-            let rangeStatus = VTCompressionSessionGetTimeRangesForNextPass(
-                compressionSession,
-                timeRangeCountOut: &rangeCount,
-                timeRangeArrayOut: &rangePointer
-            )
-            guard rangeStatus == noErr,
-                  rangeCount > 0,
-                  let rangePointer
-            else {
-                throw TranscodeError.frameEncodingFailed(rangeStatus)
-            }
-            let rangeBuffer = UnsafeBufferPointer(
-                start: rangePointer,
-                count: Int(rangeCount)
-            )
-            let nextPassRanges = Array(rangeBuffer)
-            let siloRangeStatus = VTFrameSiloSetTimeRangesForNextPass(
-                multiPassResources.frameSilo,
-                timeRangeCount: rangeCount,
-                timeRangeArray: rangePointer
-            )
-            guard siloRangeStatus == noErr else {
-                throw TranscodeError.frameEncodingFailed(siloRangeStatus)
-            }
-
-            let beginFinalStatus = VTCompressionSessionBeginPass(
-                compressionSession,
-                flags: .beginFinalPass,
-                nil
-            )
-            guard beginFinalStatus == noErr else {
-                throw TranscodeError.frameEncodingFailed(beginFinalStatus)
-            }
-            _ = try encodeVideoPass(
-                asset: asset,
-                videoTrack: videoTrack,
-                compressionSession: compressionSession,
-                resolvedSettings: resolvedSettings,
-                cancellationToken: cancellationToken,
-                timeRange: timeRange,
-                allowedTimeRanges: nextPassRanges,
-                progressStart: 0.46,
-                progressEnd: 0.89,
-                sourceDuration: sourceDuration,
-                sessionStartTime: sessionStartTime,
-                diagnosticsMonitor: diagnosticsMonitor,
-                progress: progress
-            )
-            try completeCompressionPass(compressionSession)
-            try callbackContext.throwIfFailed()
-            let endFinalStatus = VTCompressionSessionEndPass(
-                compressionSession,
-                furtherPassesRequestedOut: nil,
-                nil
-            )
-            guard endFinalStatus == noErr else {
-                throw TranscodeError.frameEncodingFailed(endFinalStatus)
-            }
-            passCount = 2
-        }
-        diagnosticsMonitor.capture(
-            stage: "multipass-encoding-completed",
-            progress: 0.89
-        )
-        var hardwareValue: CFTypeRef?
-        let hardwareStatus = VTSessionCopyProperty(
-            compressionSession,
-            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-            allocator: nil,
-            valueOut: &hardwareValue
-        )
-        let usesHardware = (hardwareValue as? NSNumber)?.boolValue == true
-        guard hardwareStatus == noErr, usesHardware else {
-            throw TranscodeError.writerFailed("运行时没有确认严格硬件编码器。")
-        }
-
-        // 多遍输出此后只读取 Frame Silo，不再需要编码会话。先执行公开的
-        // 有序 teardown，并让 compressionSession 与 callbackContext 在
-        // MOV 写入期间继续存活，避免服务断开回调与 AVAssetReader 析构重叠。
-        VTCompressionSessionInvalidate(compressionSession)
-        compressionSessionIsInvalidated = true
 
         if let passthroughReader,
            !passthroughReader.startReading()
@@ -1180,7 +993,7 @@ enum VideoTranscoder {
         writer.startSession(atSourceTime: writerSessionStartTime)
 
         reportStage("multipass-write-final", progress: 0.90, callback: progress)
-        diagnosticsMonitor.capture(
+        compressionResult.diagnosticsMonitor.captureCached(
             stage: "multipass-writing-final-stream",
             progress: 0.90
         )
@@ -1229,20 +1042,22 @@ enum VideoTranscoder {
                 writer.error?.localizedDescription ?? "finishWriting 未完成"
             )
         }
-        diagnosticsMonitor.captureCached(
+        compressionResult.diagnosticsMonitor.captureCached(
             stage: "writer-finished",
             progress: 0.985
         )
 
         let callbackSnapshot = callbackContext.snapshot()
-        guard firstPass.submittedFrames > 0,
+        guard compressionResult.firstPass.submittedFrames > 0,
               siloWriter.encodedFrames > 0
         else {
             throw TranscodeError.unsupportedInput("视频没有产生可封装的帧。")
         }
-        guard siloWriter.encodedFrames == firstPass.submittedFrames else {
+        guard siloWriter.encodedFrames
+            == compressionResult.firstPass.submittedFrames
+        else {
             throw TranscodeError.writerFailed(
-                "首遍提交 \(firstPass.submittedFrames) 帧，但最终仅封装 "
+                "首遍提交 \(compressionResult.firstPass.submittedFrames) 帧，但最终仅封装 "
                     + "\(siloWriter.encodedFrames) 帧。"
             )
         }
@@ -1254,21 +1069,254 @@ enum VideoTranscoder {
         multiPassResources.close()
 
         return RuntimeTranscodeResult(
+            propertyWrites: compressionResult.propertyWrites,
+            runtimeDiagnostics:
+                compressionResult.diagnosticsMonitor.snapshots,
+            hardwarePropertyQuery: compressionResult.hardwarePropertyQuery,
+            usesHardwareEncoder: compressionResult.usesHardware,
+            decodedVideoFrames: compressionResult.firstPass.decodedFrames,
+            submittedVideoFrames:
+                compressionResult.firstPass.submittedFrames,
+            encodedVideoFrames: siloWriter.encodedFrames,
+            droppedVideoFrames: callbackSnapshot.droppedFrames,
+            videoEncodingPasses: compressionResult.passCount,
+            copiedNonVideoSamples:
+                siloWriter.copiedNonVideoSamples + remainingNonVideo,
+            writerSessionStartSeconds: CMTimeGetSeconds(writerSessionStartTime)
+        )
+    }
+
+    private static func runMultiPassCompression(
+        asset: AVAsset,
+        videoTrack: AVAssetTrack,
+        resolvedSettings: ResolvedTranscodeSettings,
+        sourceColor: MediaColorSummary?,
+        cancellationToken: EncodingCancellationToken,
+        sourceDuration: Double,
+        timeRange: CMTimeRange?,
+        sessionStartTime: CMTime,
+        width: Int32,
+        height: Int32,
+        resources: MultiPassResourceOwner,
+        callbackContext: TranscodeCallbackContext,
+        diagnostics:
+            @escaping @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void,
+        progress: @escaping @Sendable (Double) -> Void
+    ) throws -> MultiPassCompressionResult {
+        var compressionSessionReference: VTCompressionSession?
+        let encoderSpecification = [
+            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true,
+        ] as CFDictionary
+        let imageBufferAttributes = [
+            kCVPixelBufferPixelFormatTypeKey as String: resolvedSettings.pixelFormat,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as NSDictionary,
+        ] as CFDictionary
+        let sessionStatus = VTCompressionSessionCreate(
+            allocator: nil,
+            width: width,
+            height: height,
+            codecType: resolvedSettings.codecType,
+            encoderSpecification: encoderSpecification,
+            imageBufferAttributes: imageBufferAttributes,
+            compressedDataAllocator: nil,
+            outputCallback: transcodeOutputCallback,
+            refcon: Unmanaged.passUnretained(callbackContext).toOpaque(),
+            compressionSessionOut: &compressionSessionReference
+        )
+        guard sessionStatus == noErr, let compressionSessionReference else {
+            throw TranscodeError.compressionSessionFailed(sessionStatus)
+        }
+        var compressionSessionIsInvalidated = false
+        defer {
+            if !compressionSessionIsInvalidated {
+                VTCompressionSessionInvalidate(compressionSessionReference)
+            }
+        }
+        let diagnosticsMonitor = RuntimeDiagnosticsMonitor(
+            session: compressionSessionReference,
+            callback: diagnostics
+        )
+
+        var propertyWrites = try configure(
+            compressionSessionReference,
+            settings: resolvedSettings,
+            sourceColor: sourceColor
+        )
+        let multiPassSetStatus = VTSessionSetProperty(
+            compressionSessionReference,
+            key: kVTCompressionPropertyKey_MultiPassStorage,
+            value: resources.storage
+        )
+        let multiPassWrite = PropertyWriteResult(
+            key: "MultiPassStorage",
+            requestedValue: .string("VTMultiPassStorage"),
+            status: APICallResult(
+                function: "VTSessionSetProperty(MultiPassStorage)",
+                status: multiPassSetStatus
+            )
+        )
+        propertyWrites.append(multiPassWrite)
+        guard multiPassSetStatus == noErr else {
+            throw MultiPassUnavailable(propertyWrite: multiPassWrite)
+        }
+
+        let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(
+            compressionSessionReference
+        )
+        guard prepareStatus == noErr else {
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function:
+                        "VTCompressionSessionPrepareToEncodeFrames(MultiPass)",
+                    status: prepareStatus
+                )
+            )
+        }
+        reportStage("multipass-prepared", progress: 0.03, callback: progress)
+        diagnosticsMonitor.capture(
+            stage: "multipass-prepared",
+            progress: 0.03
+        )
+
+        let beginStatus = VTCompressionSessionBeginPass(
+            compressionSessionReference,
+            flags: [],
+            nil
+        )
+        guard beginStatus == noErr else {
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function: "VTCompressionSessionBeginPass",
+                    status: beginStatus
+                )
+            )
+        }
+        let firstPass = try encodeVideoPass(
+            asset: asset,
+            videoTrack: videoTrack,
+            compressionSession: compressionSessionReference,
+            resolvedSettings: resolvedSettings,
+            cancellationToken: cancellationToken,
+            timeRange: timeRange,
+            allowedTimeRanges: nil,
+            progressStart: 0.03,
+            progressEnd: 0.46,
+            sourceDuration: sourceDuration,
+            sessionStartTime: sessionStartTime,
+            diagnosticsMonitor: diagnosticsMonitor,
+            progress: progress
+        )
+        try completeCompressionPass(compressionSessionReference)
+        try callbackContext.throwIfFailed()
+
+        var furtherPassesRequested = DarwinBoolean(false)
+        let endFirstStatus = VTCompressionSessionEndPass(
+            compressionSessionReference,
+            furtherPassesRequestedOut: &furtherPassesRequested,
+            nil
+        )
+        guard endFirstStatus == noErr else {
+            throw TranscodeError.frameEncodingFailed(endFirstStatus)
+        }
+
+        var passCount = 1
+        if furtherPassesRequested.boolValue {
+            var rangeCount: CMItemCount = 0
+            var rangePointer: UnsafePointer<CMTimeRange>?
+            let rangeStatus = VTCompressionSessionGetTimeRangesForNextPass(
+                compressionSessionReference,
+                timeRangeCountOut: &rangeCount,
+                timeRangeArrayOut: &rangePointer
+            )
+            guard rangeStatus == noErr,
+                  rangeCount > 0,
+                  let rangePointer
+            else {
+                throw TranscodeError.frameEncodingFailed(rangeStatus)
+            }
+            let rangeBuffer = UnsafeBufferPointer(
+                start: rangePointer,
+                count: Int(rangeCount)
+            )
+            let nextPassRanges = Array(rangeBuffer)
+            let siloRangeStatus = VTFrameSiloSetTimeRangesForNextPass(
+                resources.frameSilo,
+                timeRangeCount: rangeCount,
+                timeRangeArray: rangePointer
+            )
+            guard siloRangeStatus == noErr else {
+                throw TranscodeError.frameEncodingFailed(siloRangeStatus)
+            }
+
+            let beginFinalStatus = VTCompressionSessionBeginPass(
+                compressionSessionReference,
+                flags: .beginFinalPass,
+                nil
+            )
+            guard beginFinalStatus == noErr else {
+                throw TranscodeError.frameEncodingFailed(beginFinalStatus)
+            }
+            _ = try encodeVideoPass(
+                asset: asset,
+                videoTrack: videoTrack,
+                compressionSession: compressionSessionReference,
+                resolvedSettings: resolvedSettings,
+                cancellationToken: cancellationToken,
+                timeRange: timeRange,
+                allowedTimeRanges: nextPassRanges,
+                progressStart: 0.46,
+                progressEnd: 0.89,
+                sourceDuration: sourceDuration,
+                sessionStartTime: sessionStartTime,
+                diagnosticsMonitor: diagnosticsMonitor,
+                progress: progress
+            )
+            try completeCompressionPass(compressionSessionReference)
+            try callbackContext.throwIfFailed()
+            let endFinalStatus = VTCompressionSessionEndPass(
+                compressionSessionReference,
+                furtherPassesRequestedOut: nil,
+                nil
+            )
+            guard endFinalStatus == noErr else {
+                throw TranscodeError.frameEncodingFailed(endFinalStatus)
+            }
+            passCount = 2
+        }
+        diagnosticsMonitor.capture(
+            stage: "multipass-encoding-completed",
+            progress: 0.89
+        )
+        var hardwareValue: CFTypeRef?
+        let hardwareStatus = VTSessionCopyProperty(
+            compressionSessionReference,
+            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+            allocator: nil,
+            valueOut: &hardwareValue
+        )
+        let usesHardware = (hardwareValue as? NSNumber)?.boolValue == true
+        guard hardwareStatus == noErr, usesHardware else {
+            throw TranscodeError.writerFailed("运行时没有确认严格硬件编码器。")
+        }
+
+        // 先失效并让诊断监视器释放会话；离开本函数后最后一个局部引用也
+        // 会销毁。调用方只有在本函数返回后才读取或释放 Frame Silo。
+        VTCompressionSessionInvalidate(compressionSessionReference)
+        compressionSessionIsInvalidated = true
+        diagnosticsMonitor.detachSession()
+
+        return MultiPassCompressionResult(
             propertyWrites: propertyWrites,
-            runtimeDiagnostics: diagnosticsMonitor.snapshots,
+            diagnosticsMonitor: diagnosticsMonitor,
             hardwarePropertyQuery: APICallResult(
                 function: "VTSessionCopyProperty(UsingHardwareAcceleratedVideoEncoder)",
                 status: hardwareStatus
             ),
-            usesHardwareEncoder: usesHardware,
-            decodedVideoFrames: firstPass.decodedFrames,
-            submittedVideoFrames: firstPass.submittedFrames,
-            encodedVideoFrames: siloWriter.encodedFrames,
-            droppedVideoFrames: callbackSnapshot.droppedFrames,
-            videoEncodingPasses: passCount,
-            copiedNonVideoSamples:
-                siloWriter.copiedNonVideoSamples + remainingNonVideo,
-            writerSessionStartSeconds: CMTimeGetSeconds(writerSessionStartTime)
+            usesHardware: usesHardware,
+            firstPass: firstPass,
+            passCount: passCount
         )
     }
 
@@ -2146,6 +2194,15 @@ private struct MultiPassUnavailable: Error {
     let propertyWrite: PropertyWriteResult
 }
 
+private struct MultiPassCompressionResult {
+    let propertyWrites: [PropertyWriteResult]
+    let diagnosticsMonitor: RuntimeDiagnosticsMonitor
+    let hardwarePropertyQuery: APICallResult
+    let usesHardware: Bool
+    let firstPass: VideoPassResult
+    let passCount: Int
+}
+
 private final class MultiPassResourceOwner {
     private var storageReference: VTMultiPassStorage?
     private var frameSiloReference: VTFrameSilo?
@@ -2213,7 +2270,7 @@ private struct RuntimeTranscodeResult {
 }
 
 private final class RuntimeDiagnosticsMonitor {
-    private let session: VTCompressionSession
+    private var session: VTCompressionSession?
     private let keys: [String]
     private let callback:
         @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void
@@ -2278,6 +2335,9 @@ private final class RuntimeDiagnosticsMonitor {
         progress: Double,
         preferredKeys: [String]? = nil
     ) {
+        guard let session else {
+            return
+        }
         let selectedKeys: [String]
         if let preferredKeys {
             let available = Set(keys)
@@ -2303,6 +2363,10 @@ private final class RuntimeDiagnosticsMonitor {
             "\($0.key)=\($0.displayText)"
         }.joined(separator: ";")
         print("VT_TRANSCODE_DIAGNOSTICS=\(stage);\(summary)")
+    }
+
+    func detachSession() {
+        session = nil
     }
 
     func captureCached(
