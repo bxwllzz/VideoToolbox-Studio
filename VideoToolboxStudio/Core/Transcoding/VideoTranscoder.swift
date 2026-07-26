@@ -242,7 +242,7 @@ enum VideoTranscoder {
     }
 
     private static func encode(
-        asset: AVURLAsset,
+        asset: AVAsset,
         videoTrack: AVAssetTrack,
         nonVideoTracks: [AVAssetTrack],
         outputURL: URL,
