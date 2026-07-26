@@ -29,7 +29,7 @@ GitHub Actions 使用 OIDC（OpenID Connect，开放式身份连接）换取短�
 
 ## 触发规则
 
-- 仓库所有者 `bxwllzz` 从同仓库分支发起的 PR（Pull Request，拉取请求）：通过 OIDC 获取临时凭据，只执行 `testCloudTranscodePreservesMediaContract`；IAM 信任策略必须允许所有者仓库的 `:pull_request` 主体，并用不可变 `actor_id` 限制触发者；
+- 仓库所有者 `bxwllzz` 从同仓库分支发起的 PR（Pull Request，拉取请求）：通过 OIDC 获取临时凭据，只执行 `testCloudTranscodePreservesMediaContract`。该用例先将内置样片写入系统照片库，再通过主界面 PhotoKit 链路读取 `AVAsset` 并转码；IAM 信任策略必须允许所有者仓库的 `:pull_request` 主体，并用不可变 `actor_id` 限制触发者；
 - 其他作者或 fork 发起的 PR：整个 AWS Job 跳过，不申请 OIDC 令牌，也不访问 AWS；
 - 推送到 `main`：通过 OIDC 获取临时凭据，并自动执行完整 Device Farm 真机回归；
 - Actions 页面手动触发：在所选分支执行完整回归。
@@ -49,6 +49,8 @@ AWS 结果只证明 Artifact 中记录的设备、系统、构建和 commit 组�
 - `artifacts/`：Device Farm 日志、文件与截图。
 
 Device Farm 报告中的临时下载 URL 不进入 GitHub Artifact。
+
+AWS 公有 iPhone 不登录个人 iCloud。上述用例验证系统照片库、PhotoKit 授权/读取与直接 `AVAsset` 转码，不构成真实 iCloud Photos 下载证据；真实 iCloud 素材仍须在用户自己的 iPhone 上验收。
 
 ## 当前接入状态
 

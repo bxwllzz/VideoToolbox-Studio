@@ -3,6 +3,53 @@ import CoreMedia
 import Foundation
 import VideoToolbox
 
+struct TranscodeSource: Identifiable, @unchecked Sendable {
+    let id: String
+    let asset: AVAsset
+    let fileName: String
+    let fileSize: Int64?
+    let creationDate: Date?
+    let modificationDate: Date?
+    let securityScopedURL: URL?
+
+    init(
+        id: String,
+        asset: AVAsset,
+        fileName: String,
+        fileSize: Int64?,
+        creationDate: Date?,
+        modificationDate: Date?,
+        securityScopedURL: URL? = nil
+    ) {
+        self.id = id
+        self.asset = asset
+        self.fileName = fileName
+        self.fileSize = fileSize
+        self.creationDate = creationDate
+        self.modificationDate = modificationDate
+        self.securityScopedURL = securityScopedURL
+    }
+
+    static func localFile(_ url: URL) -> TranscodeSource {
+        let values = try? url.resourceValues(
+            forKeys: [
+                .fileSizeKey,
+                .creationDateKey,
+                .contentModificationDateKey,
+            ]
+        )
+        return TranscodeSource(
+            id: url.standardizedFileURL.absoluteString,
+            asset: AVURLAsset(url: url),
+            fileName: url.lastPathComponent,
+            fileSize: values?.fileSize.map { Int64($0) },
+            creationDate: values?.creationDate,
+            modificationDate: values?.contentModificationDate,
+            securityScopedURL: url
+        )
+    }
+}
+
 enum TranscodeTargetCodec: String, Codable, CaseIterable, Identifiable, Sendable {
     case automatic
     case h264

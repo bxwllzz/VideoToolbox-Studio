@@ -11,13 +11,13 @@ struct TranscodeQueueJob: Identifiable {
     }
 
     let id: UUID
-    let sourceURL: URL
+    let source: TranscodeSource
     var state: State
     var result: TranscodeResult?
 
-    init(sourceURL: URL) {
+    init(source: TranscodeSource) {
         id = UUID()
-        self.sourceURL = sourceURL
+        self.source = source
         state = .queued
         result = nil
     }
@@ -32,6 +32,14 @@ final class TranscodeQueueStore: ObservableObject {
 
     private var task: Task<Void, Never>?
     private var cancellationToken: EncodingCancellationToken?
+
+    init(initialSources: [TranscodeSource] = []) {
+        jobs = initialSources.map(TranscodeQueueJob.init(source:))
+    }
+
+    convenience init(initialURLs: [URL]) {
+        self.init(initialSources: initialURLs.map(TranscodeSource.localFile))
+    }
 
     var queuedCount: Int {
         jobs.filter {
@@ -71,10 +79,11 @@ final class TranscodeQueueStore: ObservableObject {
         if replaceQueue {
             jobs.removeAll()
         }
-        let existing = Set(jobs.map(\.sourceURL))
+        let existing = Set(jobs.map(\.source.id))
         let additions = urls
-            .filter { !existing.contains($0) }
-            .map(TranscodeQueueJob.init(sourceURL:))
+            .map(TranscodeSource.localFile)
+            .filter { !existing.contains($0.id) }
+            .map(TranscodeQueueJob.init(source:))
         jobs.append(contentsOf: additions)
     }
 
@@ -117,7 +126,7 @@ final class TranscodeQueueStore: ObservableObject {
                     setState(.cancelled, for: jobID)
                     break
                 }
-                guard let sourceURL = jobs.first(where: { $0.id == jobID })?.sourceURL else {
+                guard let source = jobs.first(where: { $0.id == jobID })?.source else {
                     continue
                 }
 
@@ -128,7 +137,7 @@ final class TranscodeQueueStore: ObservableObject {
                 do {
                     let worker = Task.detached(priority: .userInitiated) {
                         try await VideoTranscoder.transcode(
-                            sourceURL: sourceURL,
+                            source: source,
                             settings: requestedSettings,
                             buildReport: buildReport,
                             cancellationToken: token

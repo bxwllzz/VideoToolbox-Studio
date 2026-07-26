@@ -48,7 +48,8 @@
 ## 4. 目标技术架构
 
 ```text
-Files / PhotoKit
+PhotoKit → AVAsset（不复制原视频）
+本地测试素材 → AVURLAsset
         ↓
 AVAssetReader
         ↓
@@ -70,7 +71,7 @@ AVAssetWriter
 - AVFoundation：媒体读取、音频处理和封装；
 - Core Media：Sample Buffer、格式描述和时间戳；
 - Core Video：Pixel Buffer；
-- PhotoKit 与 Uniform Type Identifiers：媒体导入导出；
+- PhotoKit：照片库授权、视频浏览与按需取得当前版本的 AVAsset；
 - OSLog：结构化诊断日志；
 - Core Image 或 Metal：后期确有需要时处理缩放、像素与色彩转换。
 
