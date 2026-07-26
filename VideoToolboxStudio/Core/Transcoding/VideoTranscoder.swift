@@ -929,45 +929,16 @@ enum VideoTranscoder {
             )
         )
 
-        var multiPassStorage: VTMultiPassStorage?
-        let storageStatus = VTMultiPassStorageCreate(
-            allocator: kCFAllocatorDefault,
-            fileURL: nil,
-            timeRange: storageTimeRange,
-            options: nil,
-            multiPassStorageOut: &multiPassStorage
+        let multiPassResources = try makeMultiPassResources(
+            storageTimeRange: storageTimeRange
         )
-        guard storageStatus == noErr, let multiPassStorage else {
-            throw MultiPassUnavailable(
-                propertyWrite: multiPassPropertyWrite(
-                    function: "VTMultiPassStorageCreate",
-                    status: storageStatus
-                )
-            )
-        }
-        defer {
-            VTMultiPassStorageClose(multiPassStorage)
-        }
-
-        var frameSilo: VTFrameSilo?
-        let siloStatus = VTFrameSiloCreate(
-            allocator: kCFAllocatorDefault,
-            fileURL: nil,
-            timeRange: storageTimeRange,
-            options: nil,
-            frameSiloOut: &frameSilo
-        )
-        guard siloStatus == noErr, let frameSilo else {
-            throw MultiPassUnavailable(
-                propertyWrite: multiPassPropertyWrite(
-                    function: "VTFrameSiloCreate",
-                    status: siloStatus
-                )
-            )
-        }
 
         let callbackContext = TranscodeCallbackContext()
-        callbackContext.routeOutput(to: frameSilo)
+        callbackContext.routeOutput(to: multiPassResources.frameSilo)
+        defer {
+            callbackContext.clearOutputRoute()
+            multiPassResources.close()
+        }
         var compressionSession: VTCompressionSession?
         let encoderSpecification = [
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true,
@@ -1012,7 +983,7 @@ enum VideoTranscoder {
         let multiPassSetStatus = VTSessionSetProperty(
             compressionSession,
             key: kVTCompressionPropertyKey_MultiPassStorage,
-            value: multiPassStorage
+            value: multiPassResources.storage
         )
         let multiPassWrite = PropertyWriteResult(
             key: "MultiPassStorage",
@@ -1107,7 +1078,7 @@ enum VideoTranscoder {
             )
             let nextPassRanges = Array(rangeBuffer)
             let siloRangeStatus = VTFrameSiloSetTimeRangesForNextPass(
-                frameSilo,
+                multiPassResources.frameSilo,
                 timeRangeCount: rangeCount,
                 timeRangeArray: rangePointer
             )
@@ -1220,7 +1191,7 @@ enum VideoTranscoder {
             cancellationToken: cancellationToken
         )
         let siloReadStatus = VTFrameSiloCallBlockForEachSampleBuffer(
-            frameSilo,
+            multiPassResources.frameSilo,
             in: storageTimeRange
         ) { sampleBuffer in
             siloWriter.receive(sampleBuffer)
@@ -1275,6 +1246,12 @@ enum VideoTranscoder {
                     + "\(siloWriter.encodedFrames) 帧。"
             )
         }
+
+        // callbackContext 也强持有 Frame Silo。必须先断开这条引用，再释放
+        // Frame Silo，最后关闭它依赖的 MultiPass Storage；反向顺序会让
+        // Frame Silo 析构期间再次访问已关闭的 Storage。
+        callbackContext.clearOutputRoute()
+        multiPassResources.close()
 
         return RuntimeTranscodeResult(
             propertyWrites: propertyWrites,
@@ -1512,6 +1489,52 @@ enum VideoTranscoder {
             key: "MultiPassStorage",
             requestedValue: .string("VTMultiPassStorage"),
             status: APICallResult(function: function, status: status)
+        )
+    }
+
+    private static func makeMultiPassResources(
+        storageTimeRange: CMTimeRange
+    ) throws -> MultiPassResourceOwner {
+        var storage: VTMultiPassStorage?
+        let storageStatus = VTMultiPassStorageCreate(
+            allocator: kCFAllocatorDefault,
+            fileURL: nil,
+            timeRange: storageTimeRange,
+            options: nil,
+            multiPassStorageOut: &storage
+        )
+        guard storageStatus == noErr, let storage else {
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function: "VTMultiPassStorageCreate",
+                    status: storageStatus
+                )
+            )
+        }
+
+        var frameSilo: VTFrameSilo?
+        let siloStatus = VTFrameSiloCreate(
+            allocator: kCFAllocatorDefault,
+            fileURL: nil,
+            timeRange: storageTimeRange,
+            options: nil,
+            frameSiloOut: &frameSilo
+        )
+        guard siloStatus == noErr, let frameSilo else {
+            VTMultiPassStorageClose(storage)
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function: "VTFrameSiloCreate",
+                    status: siloStatus
+                )
+            )
+        }
+
+        // 在本辅助函数返回后，调用方只通过一个所有者访问这两个对象，
+        // 避免 encodeMultiPass 栈上残留独立的 Frame Silo 强引用。
+        return MultiPassResourceOwner(
+            storage: storage,
+            frameSilo: frameSilo
         )
     }
 
@@ -2123,6 +2146,53 @@ private struct MultiPassUnavailable: Error {
     let propertyWrite: PropertyWriteResult
 }
 
+private final class MultiPassResourceOwner {
+    private var storageReference: VTMultiPassStorage?
+    private var frameSiloReference: VTFrameSilo?
+    private var isClosed = false
+
+    init(
+        storage: VTMultiPassStorage,
+        frameSilo: VTFrameSilo
+    ) {
+        storageReference = storage
+        frameSiloReference = frameSilo
+    }
+
+    var storage: VTMultiPassStorage {
+        guard let storageReference, !isClosed else {
+            preconditionFailure("MultiPass Storage 已关闭")
+        }
+        return storageReference
+    }
+
+    var frameSilo: VTFrameSilo {
+        guard let frameSiloReference, !isClosed else {
+            preconditionFailure("Frame Silo 已关闭")
+        }
+        return frameSiloReference
+    }
+
+    func close() {
+        guard !isClosed else {
+            return
+        }
+        isClosed = true
+
+        // Frame Silo 内部仍依赖 MultiPass Storage。ARC 会同步释放这里的
+        // 最后一个 Silo 引用；等它完成失效后，才能关闭调用方拥有的 Storage。
+        frameSiloReference = nil
+        if let storageReference {
+            VTMultiPassStorageClose(storageReference)
+        }
+        storageReference = nil
+    }
+
+    deinit {
+        close()
+    }
+}
+
 private struct VideoPassResult {
     let decodedFrames: Int
     let submittedFrames: Int
@@ -2505,6 +2575,12 @@ private final class TranscodeCallbackContext: @unchecked Sendable {
     func routeOutput(to frameSilo: VTFrameSilo) {
         lock.withLock {
             self.frameSilo = frameSilo
+        }
+    }
+
+    func clearOutputRoute() {
+        lock.withLock {
+            frameSilo = nil
         }
     }
 
