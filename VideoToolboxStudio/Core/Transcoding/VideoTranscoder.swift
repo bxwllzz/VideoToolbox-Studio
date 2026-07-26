@@ -970,7 +970,13 @@ enum VideoTranscoder {
             compressionSession
         )
         guard prepareStatus == noErr else {
-            throw TranscodeError.frameEncodingFailed(prepareStatus)
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function:
+                        "VTCompressionSessionPrepareToEncodeFrames(MultiPass)",
+                    status: prepareStatus
+                )
+            )
         }
         reportStage("multipass-prepared", progress: 0.03, callback: progress)
 
@@ -980,7 +986,12 @@ enum VideoTranscoder {
             nil
         )
         guard beginStatus == noErr else {
-            throw TranscodeError.frameEncodingFailed(beginStatus)
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function: "VTCompressionSessionBeginPass",
+                    status: beginStatus
+                )
+            )
         }
         let firstPass = try encodeVideoPass(
             asset: asset,
