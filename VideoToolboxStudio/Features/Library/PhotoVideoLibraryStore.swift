@@ -158,6 +158,12 @@ final class PhotoVideoLibraryStore: NSObject, ObservableObject {
     }
 
     private static func requestAuthorization() async -> PHAuthorizationStatus {
+        await PhotoVideoAuthorizationRequester.request()
+    }
+}
+
+private enum PhotoVideoAuthorizationRequester {
+    static func request() async -> PHAuthorizationStatus {
         await withCheckedContinuation { continuation in
             PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
                 continuation.resume(returning: status)
@@ -241,25 +247,16 @@ final class PhotoVideoCellModel: ObservableObject {
 
     func load(targetSize: CGSize) {
         if image == nil, imageRequestID == nil {
-            let options = PHImageRequestOptions()
-            options.deliveryMode = .opportunistic
-            options.resizeMode = .fast
-            options.isNetworkAccessAllowed = true
-            imageRequestID = PHCachingImageManager.shared.requestImage(
-                for: asset,
-                targetSize: targetSize,
-                contentMode: .aspectFill,
-                options: options
-            ) { [weak self] image, info in
-                guard let self, let image else {
+            let assetBox = PhotoVideoPhotoAssetBox(asset)
+            imageRequestID = PhotoVideoThumbnailRequester.request(
+                for: assetBox,
+                targetSize: targetSize
+            ) { [weak self] imageBox in
+                guard let imageBox else {
                     return
                 }
-                let cancelled = (info?[PHImageCancelledKey] as? Bool) == true
-                guard !cancelled else {
-                    return
-                }
-                Task { @MainActor in
-                    self.image = image
+                Task { @MainActor [weak self] in
+                    self?.image = imageBox.image
                 }
             }
         }
@@ -281,15 +278,10 @@ final class PhotoVideoCellModel: ObservableObject {
 
     func cancelThumbnailRequest() {
         if let imageRequestID {
-            PHCachingImageManager.shared.cancelImageRequest(imageRequestID)
+            PhotoVideoThumbnailRequester.cancel(imageRequestID)
             self.imageRequestID = nil
         }
     }
-}
-
-@MainActor
-private extension PHCachingImageManager {
-    static let shared = PHCachingImageManager()
 }
 
 @MainActor
@@ -339,7 +331,38 @@ enum PhotoVideoInspector {
         networkAccessAllowed: Bool,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AVAsset {
-        let box = try await withCheckedThrowingContinuation {
+        let assetBox = PhotoVideoPhotoAssetBox(asset)
+        let box = try await PhotoVideoAVAssetRequester.request(
+            for: assetBox,
+            networkAccessAllowed: networkAccessAllowed,
+            progress: progress
+        )
+        return box.asset
+    }
+
+    nonisolated static func codecName(_ codecType: FourCharCode) -> String {
+        switch codecType {
+        case kCMVideoCodecType_HEVC:
+            "HEVC"
+        case kCMVideoCodecType_H264:
+            "H.264"
+        case kCMVideoCodecType_AppleProRes422:
+            "ProRes"
+        default:
+            mediaFourCC(codecType).uppercased()
+        }
+    }
+}
+
+private enum PhotoVideoAVAssetRequester {
+    /// PhotoKit invokes these handlers on its own queues. Keeping their
+    /// creation outside MainActor avoids Swift 6 executor precondition traps.
+    static func request(
+        for assetBox: PhotoVideoPhotoAssetBox,
+        networkAccessAllowed: Bool,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws -> PhotoVideoAssetBox {
+        try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<PhotoVideoAssetBox, Error>) in
             let options = PHVideoRequestOptions()
             options.deliveryMode = .highQualityFormat
@@ -349,7 +372,7 @@ enum PhotoVideoInspector {
                 progress?(value)
             }
             PHImageManager.default().requestAVAsset(
-                forVideo: asset,
+                forVideo: assetBox.asset,
                 options: options
             ) { avAsset, _, info in
                 if let avAsset {
@@ -369,20 +392,14 @@ enum PhotoVideoInspector {
                 )
             }
         }
-        return box.asset
     }
+}
 
-    nonisolated static func codecName(_ codecType: FourCharCode) -> String {
-        switch codecType {
-        case kCMVideoCodecType_HEVC:
-            "HEVC"
-        case kCMVideoCodecType_H264:
-            "H.264"
-        case kCMVideoCodecType_AppleProRes422:
-            "ProRes"
-        default:
-            mediaFourCC(codecType).uppercased()
-        }
+private final class PhotoVideoPhotoAssetBox: @unchecked Sendable {
+    let asset: PHAsset
+
+    init(_ asset: PHAsset) {
+        self.asset = asset
     }
 }
 
@@ -391,6 +408,50 @@ private final class PhotoVideoAssetBox: @unchecked Sendable {
 
     init(_ asset: AVAsset) {
         self.asset = asset
+    }
+}
+
+private enum PhotoVideoThumbnailRequester {
+    private static let managerBox = PhotoVideoImageManagerBox()
+
+    static func request(
+        for assetBox: PhotoVideoPhotoAssetBox,
+        targetSize: CGSize,
+        completion: @escaping @Sendable (PhotoVideoImageBox?) -> Void
+    ) -> PHImageRequestID {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .opportunistic
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = true
+        return managerBox.manager.requestImage(
+            for: assetBox.asset,
+            targetSize: targetSize,
+            contentMode: .aspectFill,
+            options: options
+        ) { image, info in
+            let cancelled = (info?[PHImageCancelledKey] as? Bool) == true
+            guard let image, !cancelled else {
+                completion(nil)
+                return
+            }
+            completion(PhotoVideoImageBox(image))
+        }
+    }
+
+    static func cancel(_ requestID: PHImageRequestID) {
+        managerBox.manager.cancelImageRequest(requestID)
+    }
+}
+
+private final class PhotoVideoImageManagerBox: @unchecked Sendable {
+    let manager = PHCachingImageManager()
+}
+
+private final class PhotoVideoImageBox: @unchecked Sendable {
+    let image: UIImage
+
+    init(_ image: UIImage) {
+        self.image = image
     }
 }
 

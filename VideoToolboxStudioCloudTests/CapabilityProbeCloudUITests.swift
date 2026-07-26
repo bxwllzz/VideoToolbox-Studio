@@ -206,8 +206,13 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             identifier: "video-library-item"
         ).firstMatch
         XCTAssertTrue(
-            video.waitForExistence(timeout: 60),
-            "内置视频没有写入系统照片库，或相册主界面没有读取到 PHAsset。"
+            waitForExistenceWhileAppRuns(
+                video,
+                in: app,
+                timeout: 60
+            ),
+            "内置视频没有写入系统照片库，或相册主界面没有读取到 PHAsset；"
+                + "App 状态：\(app.state.rawValue)。"
         )
         let metadataReady = XCTNSPredicateExpectation(
             predicate: NSPredicate(
@@ -389,6 +394,25 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             makeHittable(rerunButton, in: app)
             if rerunButton.exists {
                 return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        return false
+    }
+
+    @MainActor
+    private func waitForExistenceWhileAppRuns(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists {
+                return true
+            }
+            if app.state == .notRunning {
+                return false
             }
             RunLoop.current.run(until: Date().addingTimeInterval(1))
         }
