@@ -394,15 +394,18 @@ private struct VideoLibraryCell: View {
             VStack(spacing: 2) {
                 HStack(spacing: 4) {
                     metadataText(fileSizeText)
-                    Spacer(minLength: 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     metadataText(codecText)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 HStack(spacing: 4) {
                     metadataText("\(item.pixelWidth)×\(item.pixelHeight)")
-                    Spacer(minLength: 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     metadataText(bitRateText)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 5)
             .padding(.top, 16)
             .padding(.bottom, 5)
@@ -414,6 +417,7 @@ private struct VideoLibraryCell: View {
                 )
             )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var selectionIndicator: some View {
@@ -439,6 +443,7 @@ private struct VideoLibraryCell: View {
         Text(text)
             .font(.caption2.monospacedDigit().weight(.medium))
             .lineLimit(1)
+            .allowsTightening(true)
             .minimumScaleFactor(0.65)
             .foregroundStyle(.white)
             .shadow(color: .black.opacity(0.8), radius: 1, y: 1)
