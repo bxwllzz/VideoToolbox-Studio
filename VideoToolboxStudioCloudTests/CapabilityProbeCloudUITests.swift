@@ -10,6 +10,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
     @MainActor
     func test只读硬件探针在云端真机通过() throws {
         let app = XCUIApplication()
+        app.launchArguments.append("--internal-testing")
         app.launch()
 
         let runButton = app.buttons["capability-run-button"]
@@ -60,6 +61,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
     @MainActor
     func test持续硬编在云端真机达到目标证据() throws {
         let app = XCUIApplication()
+        app.launchArguments.append("--internal-testing")
         app.launch()
 
         let runButton = app.buttons["sustained-run-button"]
@@ -133,6 +135,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
     @MainActor
     func test取消后可重新创建硬编会话() throws {
         let app = XCUIApplication()
+        app.launchArguments.append("--internal-testing")
         app.launch()
 
         let runButton = app.buttons["sustained-run-button"]
@@ -188,28 +191,50 @@ final class CapabilityProbeCloudUITests: XCTestCase {
     func testCloudTranscodePreservesMediaContract() throws {
         let app = XCUIApplication()
         app.launchArguments.append("--cloud-testing")
+        app.launchArguments.append("--seed-photo-library")
         app.launch()
 
-        let openTranscode = app.buttons["open-transcode"]
-        XCTAssertTrue(
-            openTranscode.waitForExistence(timeout: 30),
-            "未找到视频转换入口。"
-        )
-        openTranscode.tap()
+        allowPhotoLibraryAccess(in: app)
 
-        let runButton = app.buttons["cloud-transcode-run"]
-        makeHittable(runButton, in: app)
-        XCTAssertTrue(
-            runButton.waitForExistence(timeout: 30),
-            "未找到云端真实转码入口。"
-        )
-        runButton.tap()
-
-        let importError = app.staticTexts["transcode-import-error"]
-        if importError.waitForExistence(timeout: 2) {
-            XCTFail("云端转码素材不可用：\(importError.label)")
+        let seedError = app.staticTexts["photo-library-seed-error"]
+        if seedError.waitForExistence(timeout: 2) {
+            XCTFail("系统照片库测试素材写入失败：\(seedError.label)")
             return
         }
+
+        let video = app.buttons.matching(
+            identifier: "video-library-item"
+        ).firstMatch
+        XCTAssertTrue(
+            video.waitForExistence(timeout: 60),
+            "内置视频没有写入系统照片库，或相册主界面没有读取到 PHAsset。"
+        )
+        let metadataReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "label CONTAINS %@ AND label CONTAINS %@ "
+                    + "AND label CONTAINS %@ AND label CONTAINS %@",
+                "KB",
+                "320乘180",
+                "H.264",
+                "kb/s"
+            ),
+            object: video
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [metadataReady], timeout: 30),
+            .completed,
+            "相册缩略图没有完整显示大小、分辨率、编码类型与码率：\(video.label)"
+        )
+        let sourceLabel = video.label
+        video.tap()
+
+        let runButton = app.buttons["transcode-start"]
+        makeHittable(runButton, in: app)
+        XCTAssertTrue(
+            runButton.waitForExistence(timeout: 60),
+            "从系统照片库取得 AVAsset 后没有进入压缩设置页。"
+        )
+        runButton.tap()
 
         let summary = app.staticTexts["cloud-transcode-summary"]
         let error = app.staticTexts["cloud-transcode-error"]
@@ -245,6 +270,8 @@ final class CapabilityProbeCloudUITests: XCTestCase {
 
         let report: [String: String] = [
             "schema_version": "1.0",
+            "source": "system-photo-library",
+            "source_metadata": sourceLabel,
             "summary": summary.label,
             "metrics": metrics.label,
             "runner_device_model": UIDevice.current.model,
@@ -262,6 +289,28 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         screenshot.name = "VideoToolbox 真实视频转码结果"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+
+    @MainActor
+    private func allowPhotoLibraryAccess(in app: XCUIApplication) {
+        let springboard = XCUIApplication(
+            bundleIdentifier: "com.apple.springboard"
+        )
+        let labels = [
+            "Allow Full Access",
+            "Allow Access to All Photos",
+            "允许完全访问",
+            "允许访问所有照片",
+        ]
+        for application in [app, springboard] {
+            for label in labels {
+                let button = application.buttons[label]
+                if button.waitForExistence(timeout: 3) {
+                    button.tap()
+                    return
+                }
+            }
+        }
     }
 
     @MainActor

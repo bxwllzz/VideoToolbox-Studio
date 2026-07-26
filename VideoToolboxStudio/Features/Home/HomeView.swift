@@ -3,17 +3,31 @@ import SwiftUI
 struct HomeView: View {
     @ObservedObject var installationState: InstallationState
 
-    @StateObject private var capabilityStore = CapabilityProbeStore()
-    @StateObject private var sustainedEncodingStore = SustainedEncodingStore()
-    @State private var exportURL: URL?
-    @State private var exportError: String?
-
     private var report: BuildReport {
         BuildReport.current(
             installationIdentifier: installationState.installationIdentifier,
             launchCount: installationState.launchCount
         )
     }
+
+    var body: some View {
+        if ProcessInfo.processInfo.arguments.contains("--internal-testing") {
+            InternalTestHomeView(report: report)
+        } else {
+            NavigationStack {
+                VideoLibraryView(buildReport: report)
+            }
+        }
+    }
+}
+
+private struct InternalTestHomeView: View {
+    let report: BuildReport
+
+    @StateObject private var capabilityStore = CapabilityProbeStore()
+    @StateObject private var sustainedEncodingStore = SustainedEncodingStore()
+    @State private var exportURL: URL?
+    @State private var exportError: String?
 
     var body: some View {
         NavigationStack {

@@ -12,20 +12,37 @@ enum VideoTranscoder {
         cancellationToken: EncodingCancellationToken,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> TranscodeResult {
+        try await transcode(
+            source: .localFile(sourceURL),
+            settings: settings,
+            buildReport: buildReport,
+            cancellationToken: cancellationToken,
+            progress: progress
+        )
+    }
+
+    static func transcode(
+        source: TranscodeSource,
+        settings: TranscodeSettings,
+        buildReport: BuildReport,
+        cancellationToken: EncodingCancellationToken,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> TranscodeResult {
         try settings.validate()
         try checkCancellation(cancellationToken)
         reportStage("inspect-input", progress: 0.001, callback: progress)
 
-        let hasSecurityScope = sourceURL.startAccessingSecurityScopedResource()
+        let hasSecurityScope =
+            source.securityScopedURL?.startAccessingSecurityScopedResource() == true
         defer {
-            if hasSecurityScope {
-                sourceURL.stopAccessingSecurityScopedResource()
+            if hasSecurityScope, let securityScopedURL = source.securityScopedURL {
+                securityScopedURL.stopAccessingSecurityScopedResource()
             }
         }
 
         let thermalStateBefore = thermalDescription(ProcessInfo.processInfo.thermalState)
         let startedAt = ProcessInfo.processInfo.systemUptime
-        let inputSummary = try await MediaInspector.inspect(sourceURL)
+        let inputSummary = try await MediaInspector.inspect(source)
         reportStage("input-inspected", progress: 0.005, callback: progress)
         guard inputSummary.videoTracks.count == 1 else {
             if inputSummary.videoTracks.isEmpty {
@@ -34,7 +51,7 @@ enum VideoTranscoder {
             throw TranscodeError.multipleVideoTracks(inputSummary.videoTracks.count)
         }
 
-        let asset = AVURLAsset(url: sourceURL)
+        let asset = source.asset
         let tracks = try await asset.load(.tracks)
         let videoTracks = tracks.filter { $0.mediaType == .video }
         guard let videoTrack = videoTracks.first else {
@@ -52,7 +69,7 @@ enum VideoTranscoder {
         )
 
         let outputURL = try makeOutputURL(
-            sourceURL: sourceURL,
+            sourceFileName: source.fileName,
             codecType: codecType
         )
         let outputDirectory = outputURL.deletingLastPathComponent()
@@ -77,7 +94,7 @@ enum VideoTranscoder {
             )
 
             reportStage("inspect-output", progress: 0.99, callback: progress)
-            try copyFileDates(from: sourceURL, to: outputURL)
+            try applySourceDates(from: inputSummary, to: outputURL)
             let outputSummary = try await MediaInspector.inspect(outputURL)
             let checks = preservationChecks(
                 input: inputSummary,
@@ -128,7 +145,7 @@ enum VideoTranscoder {
                     systemName: buildReport.systemName,
                     systemVersion: buildReport.systemVersion
                 ),
-                sourceFileName: sourceURL.lastPathComponent,
+                sourceFileName: source.fileName,
                 outputFileName: outputURL.lastPathComponent,
                 requestedSettings: settings,
                 resolvedSettings: resolvedSettings,
@@ -1120,13 +1137,16 @@ enum VideoTranscoder {
     }
 
     private static func makeOutputURL(
-        sourceURL: URL,
+        sourceFileName: String,
         codecType: CMVideoCodecType
     ) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("VideoToolboxStudio", isDirectory: true)
             .appendingPathComponent("Transcoded", isDirectory: true)
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        let safeFileName = URL(fileURLWithPath: sourceFileName).lastPathComponent
+        let baseName = URL(fileURLWithPath: safeFileName)
+            .deletingPathExtension()
+            .lastPathComponent
         let codec = codecType == kCMVideoCodecType_HEVC ? "HEVC" : "H264"
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -1135,15 +1155,20 @@ enum VideoTranscoder {
         return directory.appendingPathComponent(fileName)
     }
 
-    private static func copyFileDates(from source: URL, to output: URL) throws {
-        let attributes = try FileManager.default.attributesOfItem(
-            atPath: source.path
-        )
+    private static func applySourceDates(
+        from source: MediaAssetSummary,
+        to output: URL
+    ) throws {
+        let formatter = ISO8601DateFormatter()
         var outputAttributes: [FileAttributeKey: Any] = [:]
-        if let creationDate = attributes[.creationDate] {
+        if let creationDate = source.creationDate.flatMap({
+            formatter.date(from: $0)
+        }) {
             outputAttributes[.creationDate] = creationDate
         }
-        if let modificationDate = attributes[.modificationDate] {
+        if let modificationDate = source.modificationDate.flatMap({
+            formatter.date(from: $0)
+        }) {
             outputAttributes[.modificationDate] = modificationDate
         }
         if !outputAttributes.isEmpty {

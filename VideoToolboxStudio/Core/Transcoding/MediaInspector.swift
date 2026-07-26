@@ -5,10 +5,13 @@ import Foundation
 
 enum MediaInspector {
     static func inspect(_ url: URL) async throws -> MediaAssetSummary {
-        let asset = AVURLAsset(url: url)
-        let duration = try await asset.load(.duration)
-        let tracks = try await asset.load(.tracks)
-        let metadataItems = try await asset.load(.metadata)
+        try await inspect(.localFile(url))
+    }
+
+    static func inspect(_ source: TranscodeSource) async throws -> MediaAssetSummary {
+        let duration = try await source.asset.load(.duration)
+        let tracks = try await source.asset.load(.tracks)
+        let metadataItems = try await source.asset.load(.metadata)
 
         var trackSummaries: [MediaTrackSummary] = []
         for track in tracks {
@@ -20,13 +23,27 @@ enum MediaInspector {
             metadata.append(await inspect(item))
         }
 
-        let resourceValues = try? url.resourceValues(
-            forKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey]
-        )
-        let fileSize = Int64(resourceValues?.fileSize ?? 0)
+        let resourceValues: URLResourceValues?
+        if let assetURL = (source.asset as? AVURLAsset)?.url {
+            resourceValues = try? assetURL.resourceValues(
+                forKeys: [
+                    .fileSizeKey,
+                    .creationDateKey,
+                    .contentModificationDateKey,
+                ]
+            )
+        } else {
+            resourceValues = nil
+        }
+        let fileSize = source.fileSize
+            ?? resourceValues?.fileSize.map { Int64($0) }
+            ?? 0
+        let creationDate = source.creationDate ?? resourceValues?.creationDate
+        let modificationDate =
+            source.modificationDate ?? resourceValues?.contentModificationDate
 
         return MediaAssetSummary(
-            fileName: url.lastPathComponent,
+            fileName: source.fileName,
             fileSize: fileSize,
             durationSeconds: seconds(duration),
             tracks: trackSummaries.sorted {
@@ -36,8 +53,8 @@ enum MediaInspector {
                 ($0.identifier, $0.valueFingerprint)
                     < ($1.identifier, $1.valueFingerprint)
             },
-            creationDate: resourceValues?.creationDate.map(iso8601),
-            modificationDate: resourceValues?.contentModificationDate.map(iso8601)
+            creationDate: creationDate.map(iso8601),
+            modificationDate: modificationDate.map(iso8601)
         )
     }
 

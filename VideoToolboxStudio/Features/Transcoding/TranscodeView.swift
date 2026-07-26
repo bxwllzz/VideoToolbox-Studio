@@ -1,13 +1,24 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct TranscodeView: View {
     let buildReport: BuildReport
 
-    @StateObject private var store = TranscodeQueueStore()
-    @State private var showSingleImporter = false
-    @State private var showBatchImporter = false
+    @StateObject private var store: TranscodeQueueStore
     @State private var importError: String?
+
+    init(buildReport: BuildReport, sourceURLs: [URL] = []) {
+        self.buildReport = buildReport
+        _store = StateObject(
+            wrappedValue: TranscodeQueueStore(initialURLs: sourceURLs)
+        )
+    }
+
+    init(buildReport: BuildReport, sources: [TranscodeSource]) {
+        self.buildReport = buildReport
+        _store = StateObject(
+            wrappedValue: TranscodeQueueStore(initialSources: sources)
+        )
+    }
 
     private var isCloudTesting: Bool {
         ProcessInfo.processInfo.arguments.contains("--cloud-testing")
@@ -15,7 +26,6 @@ struct TranscodeView: View {
 
     var body: some View {
         Form {
-            importSection
             presetSection
             professionalSection
             queueSection
@@ -24,51 +34,8 @@ struct TranscodeView: View {
                 cloudTestingSection
             }
         }
-        .navigationTitle("视频转换")
+        .navigationTitle("压缩设置")
         .navigationBarTitleDisplayMode(.inline)
-        .fileImporter(
-            isPresented: $showSingleImporter,
-            allowedContentTypes: [.movie],
-            allowsMultipleSelection: false,
-            onCompletion: { handleImport($0, replaceQueue: true) }
-        )
-        .fileImporter(
-            isPresented: $showBatchImporter,
-            allowedContentTypes: [.movie],
-            allowsMultipleSelection: true,
-            onCompletion: { handleImport($0, replaceQueue: false) }
-        )
-    }
-
-    private var importSection: some View {
-        Section("输入") {
-            Button {
-                showSingleImporter = true
-            } label: {
-                Label("选择单个视频", systemImage: "film")
-            }
-            .disabled(store.isRunning)
-            .accessibilityIdentifier("transcode-single-import")
-
-            Button {
-                showBatchImporter = true
-            } label: {
-                Label("添加多个视频", systemImage: "square.stack.3d.up")
-            }
-            .disabled(store.isRunning)
-            .accessibilityIdentifier("transcode-batch-import")
-
-            Text("支持 Files 中的 MOV、MP4 等系统可读视频；原文件永不覆盖。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            if let importError {
-                Label(importError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("transcode-import-error")
-            }
-        }
     }
 
     private var presetSection: some View {
@@ -215,12 +182,12 @@ struct TranscodeView: View {
                 ContentUnavailableView(
                     "尚未选择视频",
                     systemImage: "film.stack",
-                    description: Text("选择一个视频，或批量添加多个视频。")
+                    description: Text("返回视频库选择一个或多个视频。")
                 )
             } else {
                 ForEach(store.jobs) { job in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(job.sourceURL.lastPathComponent)
+                        Text(job.source.fileName)
                             .lineLimit(2)
                         jobState(job)
 
@@ -316,6 +283,13 @@ struct TranscodeView: View {
             .disabled(store.isRunning)
             .accessibilityIdentifier("cloud-transcode-run")
 
+            if let importError {
+                Label(importError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("transcode-import-error")
+            }
+
             if let firstJob = store.jobs.first {
                 switch firstJob.state {
                 case .running(let progress):
@@ -368,19 +342,6 @@ struct TranscodeView: View {
             Label(message, systemImage: "xmark.octagon.fill")
                 .font(.footnote)
                 .foregroundStyle(.red)
-        }
-    }
-
-    private func handleImport(
-        _ result: Result<[URL], Error>,
-        replaceQueue: Bool
-    ) {
-        switch result {
-        case .success(let urls):
-            store.add(urls, replaceQueue: replaceQueue)
-            importError = nil
-        case .failure(let error):
-            importError = error.localizedDescription
         }
     }
 

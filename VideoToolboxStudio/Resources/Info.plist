@@ -32,6 +32,12 @@
     <false/>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>用于在主界面显示相册视频，并在你选择后进行纯本地视频转换。</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>用于将你确认保存的视频写入照片库；云端真机回归也会写入内置测试视频。</string>
+    <key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
+    <true/>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
     <key>UILaunchScreen</key>
