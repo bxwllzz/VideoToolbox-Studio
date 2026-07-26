@@ -2236,21 +2236,20 @@ private final class MultiPassResourceOwner {
         }
         isClosed = true
 
-        // iOS 26.3.1 上公开的 CFRelease 路径会进入
-        // VTFrameSiloInvalidate → VTMultiPassStorageClose，并与
+        // iOS 26.3.1 上 VTFrameSilo 的 CFRelease 与显式
+        // VTMultiPassStorageClose 都会和
         // com.apple.coremedia.compressionsession.clientcallback 的服务断开
-        // 回调竞态，最终在系统框架内 EXC_BAD_ACCESS。VideoToolbox 没有公开
-        // 的 VTFrameSiloClose/Invalidate 替代 API，因此把已完成的 Silo
-        // 隔离保留到进程退出；不再让前台 App 执行这条有缺陷的释放路径。
-        if let frameSiloReference {
-            FrameSiloProcessLifetimeKeeper.shared.retain(frameSiloReference)
-            print("VT_FRAME_SILO_RELEASE=deferred-until-process-exit")
+        // 回调竞态，随机在系统框架内 EXC_BAD_ACCESS。VideoToolbox 没有其他
+        // 公开关闭 API，因此将已经使用过的两个远程对象作为一对隔离保留
+        // 到进程退出，不让前台 App 执行已证实有缺陷的关闭路径。
+        if let storageReference, let frameSiloReference {
+            MultiPassProcessLifetimeKeeper.shared.retain(
+                storage: storageReference,
+                frameSilo: frameSiloReference
+            )
+            print("VT_MULTIPASS_RESOURCE_RELEASE=deferred-until-process-exit")
         }
         frameSiloReference = nil
-        if let storageReference {
-            let closeStatus = VTMultiPassStorageClose(storageReference)
-            print("VT_MULTIPASS_STORAGE_CLOSE_STATUS=\(closeStatus)")
-        }
         storageReference = nil
     }
 
@@ -2259,16 +2258,21 @@ private final class MultiPassResourceOwner {
     }
 }
 
-private final class FrameSiloProcessLifetimeKeeper: @unchecked Sendable {
-    static let shared = FrameSiloProcessLifetimeKeeper()
+private final class MultiPassProcessLifetimeKeeper: @unchecked Sendable {
+    static let shared = MultiPassProcessLifetimeKeeper()
 
     private let lock = NSLock()
+    private var retainedStorages: [VTMultiPassStorage] = []
     private var retainedSilos: [VTFrameSilo] = []
 
     private init() {}
 
-    func retain(_ frameSilo: VTFrameSilo) {
+    func retain(
+        storage: VTMultiPassStorage,
+        frameSilo: VTFrameSilo
+    ) {
         lock.withLock {
+            retainedStorages.append(storage)
             retainedSilos.append(frameSilo)
         }
     }
