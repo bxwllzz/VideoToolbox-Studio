@@ -162,7 +162,9 @@ selected_device="$(
         .devices[]
         | select(.platform == "IOS")
         | select(.formFactor == "PHONE")
+        | (.model | sub("^Apple "; "") | sub(" +$"; "")) as $model
         | . + {
+            normalized_model: $model,
             parsed_os: (
               (.os | tostring | split(".") | map(tonumber? // 0))
               + [0, 0, 0]
@@ -172,10 +174,10 @@ selected_device="$(
               catch 0
             ),
             model_priority: (
-              if .model == "iPhone 17 Pro" then 4
-              elif .model == "iPhone 17 Pro Max" then 3
-              elif (.model | contains("Pro")) then 2
-              elif (.model | startswith("iPhone 17")) then 1
+              if $model == "iPhone 17 Pro" then 4
+              elif $model == "iPhone 17 Pro Max" then 3
+              elif ($model | contains("Pro")) then 2
+              elif ($model | startswith("iPhone 17")) then 1
               else 0
               end
             ),
