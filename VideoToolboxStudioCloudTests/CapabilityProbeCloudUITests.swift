@@ -183,7 +183,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         runButton.tap()
 
         let importError = app.staticTexts["transcode-import-error"]
-        if importError.waitForExistence(timeout: 5) {
+        if importError.waitForExistence(timeout: 2) {
             XCTFail("云端转码素材不可用：\(importError.label)")
             return
         }
@@ -191,6 +191,9 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         let summary = app.staticTexts["cloud-transcode-summary"]
         let error = app.staticTexts["cloud-transcode-error"]
         let progress = app.staticTexts["cloud-transcode-progress"]
+        // SwiftUI Form 会虚拟化屏幕外的行；转码完成后内容高度变化，
+        // 云端结果区可能移出无障碍树。先滚到底部，让状态与结果行实例化。
+        makeHittable(summary, in: app)
         let deadline = Date().addingTimeInterval(90)
         while Date() < deadline, !summary.exists, !error.exists {
             RunLoop.current.run(until: Date().addingTimeInterval(1))
