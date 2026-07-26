@@ -90,6 +90,7 @@ enum VideoTranscoder {
                 sourceColor: sourceVideoSummary.color,
                 cancellationToken: cancellationToken,
                 sourceDuration: inputSummary.durationSeconds,
+                timeRange: nil,
                 progress: progress
             )
 
@@ -121,6 +122,7 @@ enum VideoTranscoder {
                 submittedVideoFrames: runtimeResult.submittedVideoFrames,
                 encodedVideoFrames: runtimeResult.encodedVideoFrames,
                 droppedVideoFrames: runtimeResult.droppedVideoFrames,
+                videoEncodingPasses: runtimeResult.videoEncodingPasses,
                 copiedNonVideoSamples: runtimeResult.copiedNonVideoSamples,
                 wallClockSeconds: wallClockSeconds,
                 sourceDurationSeconds: inputSummary.durationSeconds,
@@ -176,6 +178,99 @@ enum VideoTranscoder {
         }
     }
 
+    static func estimateOutputSize(
+        source: TranscodeSource,
+        settings: TranscodeSettings,
+        cancellationToken: EncodingCancellationToken,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> TranscodeSizeEstimate {
+        try settings.validate()
+        try checkCancellation(cancellationToken)
+
+        let inputSummary = try await MediaInspector.inspect(source)
+        guard let sourceVideoSummary = inputSummary.videoTracks.first else {
+            throw TranscodeError.unsupportedInput("没有找到视频轨道。")
+        }
+        guard inputSummary.durationSeconds.isFinite,
+              inputSummary.durationSeconds > 0
+        else {
+            throw TranscodeError.unsupportedInput("视频时长无效，无法估算。")
+        }
+
+        let tracks = try await source.asset.load(.tracks)
+        guard let videoTrack = tracks.first(where: { $0.mediaType == .video }) else {
+            throw TranscodeError.unsupportedInput("没有找到视频轨道。")
+        }
+        let nonVideoTracks = tracks.filter { $0.mediaType != .video }
+        let isHDR = sourceVideoSummary.color?.isHDR == true
+        let codecType = try settings.targetCodec.resolvedCodecType(isHDR: isHDR)
+        let resolvedSettings = resolve(
+            settings: settings,
+            sourceVideo: sourceVideoSummary,
+            codecType: codecType,
+            isHDR: isHDR
+        )
+
+        let sampleDuration = min(5, inputSummary.durationSeconds)
+        let sampleStart = sourceVideoSummary.timeRangeStartSeconds
+            + max(0, (inputSummary.durationSeconds - sampleDuration) / 2)
+        let sampleRange = CMTimeRange(
+            start: CMTime(seconds: sampleStart, preferredTimescale: 60_000),
+            duration: CMTime(seconds: sampleDuration, preferredTimescale: 60_000)
+        )
+        let outputURL = try makeEstimateOutputURL(
+            sourceFileName: source.fileName,
+            codecType: codecType
+        )
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.removeItem(at: outputURL)
+        defer {
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        _ = try await encode(
+            asset: source.asset,
+            videoTrack: videoTrack,
+            nonVideoTracks: nonVideoTracks,
+            outputURL: outputURL,
+            resolvedSettings: resolvedSettings,
+            sourceColor: sourceVideoSummary.color,
+            cancellationToken: cancellationToken,
+            sourceDuration: sampleDuration,
+            timeRange: sampleRange,
+            progress: progress
+        )
+        let sampleSummary = try await MediaInspector.inspect(outputURL)
+        let measuredDuration = max(0.001, sampleSummary.durationSeconds)
+        let estimatedBytes = Int64(
+            (Double(sampleSummary.fileSize)
+                * inputSummary.durationSeconds / measuredDuration).rounded()
+        )
+        let uncertainty = settings.rateControl == .quality ? 0.30 : 0.15
+        let lowerBound = Int64(
+            (Double(estimatedBytes) * (1 - uncertainty)).rounded()
+        )
+        let upperBound = Int64(
+            (Double(estimatedBytes) * (1 + uncertainty)).rounded()
+        )
+        let ratio = inputSummary.fileSize > 0
+            ? Double(estimatedBytes) / Double(inputSummary.fileSize)
+            : nil
+
+        return TranscodeSizeEstimate(
+            sourceFileName: source.fileName,
+            sampledDurationSeconds: measuredDuration,
+            sourceDurationSeconds: inputSummary.durationSeconds,
+            estimatedOutputBytes: estimatedBytes,
+            lowerBoundBytes: max(0, lowerBound),
+            upperBoundBytes: max(0, upperBound),
+            estimatedOutputToInputRatio: ratio
+        )
+    }
+
     static func resolve(
         settings: TranscodeSettings,
         sourceVideo: MediaTrackSummary,
@@ -200,15 +295,11 @@ enum VideoTranscoder {
             quality = settings.quality
         }
 
-        let dataRateLimits = averageBitRate.flatMap { bitRate in
-            settings.dataRateLimitMultiplier.map { multiplier in
-                [Double(bitRate) * multiplier / 8, 1]
-            }
+        let dataRateLimits = settings.dataRateLimitMultiplier.map { multiplier in
+            let limitBaseBitRate = averageBitRate ?? sourceBitRate
+            return [Double(limitBaseBitRate) * multiplier / 8, 1]
         }
         let frameRate = max(1, sourceVideo.nominalFrameRate)
-        let keyFrameInterval = settings.maxKeyFrameInterval > 0
-            ? settings.maxKeyFrameInterval
-            : max(1, Int((frameRate * settings.maxKeyFrameIntervalDuration).rounded()))
         let profileLevel: String
         let pixelFormat: OSType
         if codecType == kCMVideoCodecType_HEVC {
@@ -227,13 +318,14 @@ enum VideoTranscoder {
         return ResolvedTranscodeSettings(
             codecType: codecType,
             codecFourCC: mediaFourCC(codecType),
+            encodingQuality: settings.encodingQuality,
             profileLevel: profileLevel,
             pixelFormat: pixelFormat,
             averageBitRate: averageBitRate,
             quality: quality,
             dataRateLimits: dataRateLimits,
             expectedFrameRate: frameRate,
-            maxKeyFrameInterval: keyFrameInterval,
+            maxKeyFrameInterval: settings.maxKeyFrameInterval,
             maxKeyFrameIntervalDuration: settings.maxKeyFrameIntervalDuration,
             allowFrameReordering: settings.allowFrameReordering,
             realTime: settings.realTime,
@@ -250,6 +342,66 @@ enum VideoTranscoder {
         sourceColor: MediaColorSummary?,
         cancellationToken: EncodingCancellationToken,
         sourceDuration: Double,
+        timeRange: CMTimeRange?,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> RuntimeTranscodeResult {
+        guard resolvedSettings.encodingQuality == .refined else {
+            return try await encodeSinglePass(
+                asset: asset,
+                videoTrack: videoTrack,
+                nonVideoTracks: nonVideoTracks,
+                outputURL: outputURL,
+                resolvedSettings: resolvedSettings,
+                sourceColor: sourceColor,
+                cancellationToken: cancellationToken,
+                sourceDuration: sourceDuration,
+                timeRange: timeRange,
+                progress: progress
+            )
+        }
+
+        do {
+            return try await encodeMultiPass(
+                asset: asset,
+                videoTrack: videoTrack,
+                nonVideoTracks: nonVideoTracks,
+                outputURL: outputURL,
+                resolvedSettings: resolvedSettings,
+                sourceColor: sourceColor,
+                cancellationToken: cancellationToken,
+                sourceDuration: sourceDuration,
+                timeRange: timeRange,
+                progress: progress
+            )
+        } catch let unavailable as MultiPassUnavailable {
+            try? FileManager.default.removeItem(at: outputURL)
+            var result = try await encodeSinglePass(
+                asset: asset,
+                videoTrack: videoTrack,
+                nonVideoTracks: nonVideoTracks,
+                outputURL: outputURL,
+                resolvedSettings: resolvedSettings,
+                sourceColor: sourceColor,
+                cancellationToken: cancellationToken,
+                sourceDuration: sourceDuration,
+                timeRange: timeRange,
+                progress: progress
+            )
+            result.propertyWrites.insert(unavailable.propertyWrite, at: 0)
+            return result
+        }
+    }
+
+    private static func encodeSinglePass(
+        asset: AVAsset,
+        videoTrack: AVAssetTrack,
+        nonVideoTracks: [AVAssetTrack],
+        outputURL: URL,
+        resolvedSettings: ResolvedTranscodeSettings,
+        sourceColor: MediaColorSummary?,
+        cancellationToken: EncodingCancellationToken,
+        sourceDuration: Double,
+        timeRange: CMTimeRange?,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> RuntimeTranscodeResult {
         let reader: AVAssetReader
@@ -259,6 +411,9 @@ enum VideoTranscoder {
             writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         } catch {
             throw TranscodeError.unsupportedInput(error.localizedDescription)
+        }
+        if let timeRange {
+            reader.timeRange = timeRange
         }
 
         writer.metadata = try await asset.load(.metadata)
@@ -352,15 +507,22 @@ enum VideoTranscoder {
             )
         }
 
-        let allTracks = [videoTrack] + nonVideoTracks
-        var sessionStartTime = CMTime.zero
-        for track in allTracks {
-            let start = try await track.load(.timeRange).start
-            if start.isNumeric,
-               (sessionStartTime == .zero || CMTimeCompare(start, sessionStartTime) < 0)
-            {
-                sessionStartTime = start
+        let sessionStartTime: CMTime
+        if let timeRange {
+            sessionStartTime = timeRange.start
+        } else {
+            let allTracks = [videoTrack] + nonVideoTracks
+            var earliestStart = CMTime.zero
+            for track in allTracks {
+                let start = try await track.load(.timeRange).start
+                if start.isNumeric,
+                   (earliestStart == .zero
+                       || CMTimeCompare(start, earliestStart) < 0)
+                {
+                    earliestStart = start
+                }
             }
+            sessionStartTime = earliestStart
         }
 
         guard writer.startWriting() else {
@@ -583,7 +745,629 @@ enum VideoTranscoder {
             submittedVideoFrames: submittedVideoFrames,
             encodedVideoFrames: callbackSnapshot.encodedFrames,
             droppedVideoFrames: callbackSnapshot.droppedFrames,
+            videoEncodingPasses: 1,
             copiedNonVideoSamples: copiedNonVideoSamples
+        )
+    }
+
+    private static func encodeMultiPass(
+        asset: AVAsset,
+        videoTrack: AVAssetTrack,
+        nonVideoTracks: [AVAssetTrack],
+        outputURL: URL,
+        resolvedSettings: ResolvedTranscodeSettings,
+        sourceColor: MediaColorSummary?,
+        cancellationToken: EncodingCancellationToken,
+        sourceDuration: Double,
+        timeRange: CMTimeRange?,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> RuntimeTranscodeResult {
+        let writer: AVAssetWriter
+        do {
+            writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+        } catch {
+            throw TranscodeError.unsupportedInput(error.localizedDescription)
+        }
+        writer.metadata = try await asset.load(.metadata)
+
+        let dimensions = try await videoTrack.load(.naturalSize)
+        let width = Int32(abs(dimensions.width.rounded()))
+        let height = Int32(abs(dimensions.height.rounded()))
+        guard width > 0, height > 0 else {
+            throw TranscodeError.unsupportedInput("视频分辨率无效。")
+        }
+
+        var videoFormatHint: CMVideoFormatDescription?
+        let formatHintStatus = CMVideoFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            codecType: resolvedSettings.codecType,
+            width: width,
+            height: height,
+            extensions: nil,
+            formatDescriptionOut: &videoFormatHint
+        )
+        guard formatHintStatus == noErr, let videoFormatHint else {
+            throw TranscodeError.writerFailed(
+                "无法创建压缩视频格式提示：\(formatHintStatus)"
+            )
+        }
+        let videoWriterInput = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: nil,
+            sourceFormatHint: videoFormatHint
+        )
+        guard writer.canAdd(videoWriterInput) else {
+            throw TranscodeError.writerFailed("无法添加压缩视频轨道。")
+        }
+        writer.add(videoWriterInput)
+        videoWriterInput.transform = try await videoTrack.load(.preferredTransform)
+        videoWriterInput.metadata = try await videoTrack.load(.metadata)
+
+        let passthroughReader: AVAssetReader?
+        if nonVideoTracks.isEmpty {
+            passthroughReader = nil
+        } else {
+            do {
+                passthroughReader = try AVAssetReader(asset: asset)
+            } catch {
+                throw TranscodeError.unsupportedInput(error.localizedDescription)
+            }
+        }
+        if let timeRange {
+            passthroughReader?.timeRange = timeRange
+        }
+        var passthroughChannels: [PassthroughChannel] = []
+        for track in nonVideoTracks {
+            guard let passthroughReader else {
+                throw TranscodeError.cannotPreserveTrack(
+                    "\(track.mediaType.rawValue)#\(track.trackID)：无法创建读取器"
+                )
+            }
+            let formatDescriptions = try await track.load(.formatDescriptions)
+            guard let formatHint = formatDescriptions.first else {
+                throw TranscodeError.cannotPreserveTrack(
+                    "\(track.mediaType.rawValue)#\(track.trackID)：缺少格式描述"
+                )
+            }
+            let readerOutput = AVAssetReaderTrackOutput(
+                track: track,
+                outputSettings: nil
+            )
+            readerOutput.alwaysCopiesSampleData = false
+            guard passthroughReader.canAdd(readerOutput) else {
+                throw TranscodeError.cannotPreserveTrack(
+                    "\(track.mediaType.rawValue)#\(track.trackID)：无法读取压缩样本"
+                )
+            }
+            let writerInput = AVAssetWriterInput(
+                mediaType: track.mediaType,
+                outputSettings: nil,
+                sourceFormatHint: formatHint
+            )
+            guard writer.canAdd(writerInput) else {
+                throw TranscodeError.cannotPreserveTrack(
+                    "\(track.mediaType.rawValue)#\(track.trackID)：MOV 不接受原压缩格式"
+                )
+            }
+            passthroughReader.add(readerOutput)
+            writer.add(writerInput)
+            writerInput.languageCode = try? await track.load(.languageCode)
+            writerInput.extendedLanguageTag = try? await track.load(.extendedLanguageTag)
+            writerInput.metadata = try await track.load(.metadata)
+            passthroughChannels.append(
+                PassthroughChannel(
+                    readerOutput: readerOutput,
+                    writerInput: writerInput
+                )
+            )
+        }
+
+        let sessionStartTime = try await sourceStartTime(
+            videoTrack: videoTrack,
+            nonVideoTracks: nonVideoTracks,
+            timeRange: timeRange
+        )
+        let storageTimeRange = timeRange ?? CMTimeRange(
+            start: sessionStartTime,
+            duration: CMTime(
+                seconds: sourceDuration,
+                preferredTimescale: 60_000
+            )
+        )
+
+        var multiPassStorage: VTMultiPassStorage?
+        let storageStatus = VTMultiPassStorageCreate(
+            allocator: kCFAllocatorDefault,
+            fileURL: nil,
+            timeRange: storageTimeRange,
+            options: nil,
+            multiPassStorageOut: &multiPassStorage
+        )
+        guard storageStatus == noErr, let multiPassStorage else {
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function: "VTMultiPassStorageCreate",
+                    status: storageStatus
+                )
+            )
+        }
+        defer {
+            VTMultiPassStorageClose(multiPassStorage)
+        }
+
+        var frameSilo: VTFrameSilo?
+        let siloStatus = VTFrameSiloCreate(
+            allocator: kCFAllocatorDefault,
+            fileURL: nil,
+            timeRange: storageTimeRange,
+            options: nil,
+            frameSiloOut: &frameSilo
+        )
+        guard siloStatus == noErr, let frameSilo else {
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function: "VTFrameSiloCreate",
+                    status: siloStatus
+                )
+            )
+        }
+
+        let callbackContext = TranscodeCallbackContext()
+        callbackContext.routeOutput(to: frameSilo)
+        var compressionSession: VTCompressionSession?
+        let encoderSpecification = [
+            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true,
+        ] as CFDictionary
+        let imageBufferAttributes = [
+            kCVPixelBufferPixelFormatTypeKey as String: resolvedSettings.pixelFormat,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as NSDictionary,
+        ] as CFDictionary
+        let sessionStatus = VTCompressionSessionCreate(
+            allocator: nil,
+            width: width,
+            height: height,
+            codecType: resolvedSettings.codecType,
+            encoderSpecification: encoderSpecification,
+            imageBufferAttributes: imageBufferAttributes,
+            compressedDataAllocator: nil,
+            outputCallback: transcodeOutputCallback,
+            refcon: Unmanaged.passUnretained(callbackContext).toOpaque(),
+            compressionSessionOut: &compressionSession
+        )
+        guard sessionStatus == noErr, let compressionSession else {
+            throw TranscodeError.compressionSessionFailed(sessionStatus)
+        }
+        defer {
+            VTCompressionSessionInvalidate(compressionSession)
+        }
+
+        var propertyWrites = try configure(
+            compressionSession,
+            settings: resolvedSettings,
+            sourceColor: sourceColor
+        )
+        let multiPassSetStatus = VTSessionSetProperty(
+            compressionSession,
+            key: kVTCompressionPropertyKey_MultiPassStorage,
+            value: multiPassStorage
+        )
+        let multiPassWrite = PropertyWriteResult(
+            key: "MultiPassStorage",
+            requestedValue: .string("VTMultiPassStorage"),
+            status: APICallResult(
+                function: "VTSessionSetProperty(MultiPassStorage)",
+                status: multiPassSetStatus
+            )
+        )
+        propertyWrites.append(multiPassWrite)
+        guard multiPassSetStatus == noErr else {
+            throw MultiPassUnavailable(propertyWrite: multiPassWrite)
+        }
+
+        let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(
+            compressionSession
+        )
+        guard prepareStatus == noErr else {
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function:
+                        "VTCompressionSessionPrepareToEncodeFrames(MultiPass)",
+                    status: prepareStatus
+                )
+            )
+        }
+        reportStage("multipass-prepared", progress: 0.03, callback: progress)
+
+        let beginStatus = VTCompressionSessionBeginPass(
+            compressionSession,
+            flags: [],
+            nil
+        )
+        guard beginStatus == noErr else {
+            throw MultiPassUnavailable(
+                propertyWrite: multiPassPropertyWrite(
+                    function: "VTCompressionSessionBeginPass",
+                    status: beginStatus
+                )
+            )
+        }
+        let firstPass = try encodeVideoPass(
+            asset: asset,
+            videoTrack: videoTrack,
+            compressionSession: compressionSession,
+            resolvedSettings: resolvedSettings,
+            cancellationToken: cancellationToken,
+            timeRange: timeRange,
+            allowedTimeRanges: nil,
+            progressStart: 0.03,
+            progressEnd: 0.46,
+            sourceDuration: sourceDuration,
+            sessionStartTime: sessionStartTime,
+            progress: progress
+        )
+        try completeCompressionPass(compressionSession)
+        try callbackContext.throwIfFailed()
+
+        var furtherPassesRequested = DarwinBoolean(false)
+        let endFirstStatus = VTCompressionSessionEndPass(
+            compressionSession,
+            furtherPassesRequestedOut: &furtherPassesRequested,
+            nil
+        )
+        guard endFirstStatus == noErr else {
+            throw TranscodeError.frameEncodingFailed(endFirstStatus)
+        }
+
+        var passCount = 1
+        if furtherPassesRequested.boolValue {
+            var rangeCount: CMItemCount = 0
+            var rangePointer: UnsafePointer<CMTimeRange>?
+            let rangeStatus = VTCompressionSessionGetTimeRangesForNextPass(
+                compressionSession,
+                timeRangeCountOut: &rangeCount,
+                timeRangeArrayOut: &rangePointer
+            )
+            guard rangeStatus == noErr,
+                  rangeCount > 0,
+                  let rangePointer
+            else {
+                throw TranscodeError.frameEncodingFailed(rangeStatus)
+            }
+            let rangeBuffer = UnsafeBufferPointer(
+                start: rangePointer,
+                count: Int(rangeCount)
+            )
+            let nextPassRanges = Array(rangeBuffer)
+            let siloRangeStatus = VTFrameSiloSetTimeRangesForNextPass(
+                frameSilo,
+                timeRangeCount: rangeCount,
+                timeRangeArray: rangePointer
+            )
+            guard siloRangeStatus == noErr else {
+                throw TranscodeError.frameEncodingFailed(siloRangeStatus)
+            }
+
+            let beginFinalStatus = VTCompressionSessionBeginPass(
+                compressionSession,
+                flags: .beginFinalPass,
+                nil
+            )
+            guard beginFinalStatus == noErr else {
+                throw TranscodeError.frameEncodingFailed(beginFinalStatus)
+            }
+            _ = try encodeVideoPass(
+                asset: asset,
+                videoTrack: videoTrack,
+                compressionSession: compressionSession,
+                resolvedSettings: resolvedSettings,
+                cancellationToken: cancellationToken,
+                timeRange: timeRange,
+                allowedTimeRanges: nextPassRanges,
+                progressStart: 0.46,
+                progressEnd: 0.89,
+                sourceDuration: sourceDuration,
+                sessionStartTime: sessionStartTime,
+                progress: progress
+            )
+            try completeCompressionPass(compressionSession)
+            try callbackContext.throwIfFailed()
+            let endFinalStatus = VTCompressionSessionEndPass(
+                compressionSession,
+                furtherPassesRequestedOut: nil,
+                nil
+            )
+            guard endFinalStatus == noErr else {
+                throw TranscodeError.frameEncodingFailed(endFinalStatus)
+            }
+            passCount = 2
+        }
+
+        guard writer.startWriting() else {
+            throw TranscodeError.writerFailed(
+                writer.error?.localizedDescription ?? "startWriting 返回 false"
+            )
+        }
+        writer.startSession(atSourceTime: sessionStartTime)
+        if let passthroughReader,
+           !passthroughReader.startReading()
+        {
+            writer.cancelWriting()
+            throw TranscodeError.readerFailed(
+                passthroughReader.error?.localizedDescription
+                    ?? "非视频轨道 startReading 返回 false"
+            )
+        }
+
+        reportStage("multipass-write-final", progress: 0.90, callback: progress)
+        let siloWriter = FrameSiloWriterContext(
+            writer: writer,
+            videoWriterInput: videoWriterInput,
+            passthroughChannels: passthroughChannels,
+            cancellationToken: cancellationToken
+        )
+        let siloReadStatus = VTFrameSiloCallBlockForEachSampleBuffer(
+            frameSilo,
+            in: storageTimeRange
+        ) { sampleBuffer in
+            siloWriter.receive(sampleBuffer)
+        }
+        if let error = siloWriter.error {
+            writer.cancelWriting()
+            throw error
+        }
+        guard siloReadStatus == noErr else {
+            writer.cancelWriting()
+            throw TranscodeError.writerFailed(
+                "读取多遍最终码流失败（OSStatus \(siloReadStatus)）。"
+            )
+        }
+        let remainingNonVideo = try drainRemainingPassthroughSamples(
+            passthroughChannels,
+            writer: writer,
+            cancellationToken: cancellationToken
+        )
+        videoWriterInput.markAsFinished()
+        for channel in passthroughChannels {
+            channel.writerInput.markAsFinished()
+        }
+
+        if passthroughReader?.status == .failed {
+            writer.cancelWriting()
+            throw TranscodeError.readerFailed(
+                passthroughReader?.error?.localizedDescription
+                    ?? "未知 AVAssetReader 错误"
+            )
+        }
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw TranscodeError.writerFailed(
+                writer.error?.localizedDescription ?? "finishWriting 未完成"
+            )
+        }
+
+        var hardwareValue: CFTypeRef?
+        let hardwareStatus = VTSessionCopyProperty(
+            compressionSession,
+            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+            allocator: nil,
+            valueOut: &hardwareValue
+        )
+        let usesHardware = (hardwareValue as? NSNumber)?.boolValue == true
+        guard hardwareStatus == noErr, usesHardware else {
+            throw TranscodeError.writerFailed("运行时没有确认严格硬件编码器。")
+        }
+        let callbackSnapshot = callbackContext.snapshot()
+        guard firstPass.submittedFrames > 0,
+              siloWriter.encodedFrames > 0
+        else {
+            throw TranscodeError.unsupportedInput("视频没有产生可封装的帧。")
+        }
+        guard siloWriter.encodedFrames == firstPass.submittedFrames else {
+            throw TranscodeError.writerFailed(
+                "首遍提交 \(firstPass.submittedFrames) 帧，但最终仅封装 "
+                    + "\(siloWriter.encodedFrames) 帧。"
+            )
+        }
+
+        return RuntimeTranscodeResult(
+            propertyWrites: propertyWrites,
+            hardwarePropertyQuery: APICallResult(
+                function: "VTSessionCopyProperty(UsingHardwareAcceleratedVideoEncoder)",
+                status: hardwareStatus
+            ),
+            usesHardwareEncoder: usesHardware,
+            decodedVideoFrames: firstPass.decodedFrames,
+            submittedVideoFrames: firstPass.submittedFrames,
+            encodedVideoFrames: siloWriter.encodedFrames,
+            droppedVideoFrames: callbackSnapshot.droppedFrames,
+            videoEncodingPasses: passCount,
+            copiedNonVideoSamples:
+                siloWriter.copiedNonVideoSamples + remainingNonVideo
+        )
+    }
+
+    private static func encodeVideoPass(
+        asset: AVAsset,
+        videoTrack: AVAssetTrack,
+        compressionSession: VTCompressionSession,
+        resolvedSettings: ResolvedTranscodeSettings,
+        cancellationToken: EncodingCancellationToken,
+        timeRange: CMTimeRange?,
+        allowedTimeRanges: [CMTimeRange]?,
+        progressStart: Double,
+        progressEnd: Double,
+        sourceDuration: Double,
+        sessionStartTime: CMTime,
+        progress: @escaping @Sendable (Double) -> Void
+    ) throws -> VideoPassResult {
+        let reader: AVAssetReader
+        do {
+            reader = try AVAssetReader(asset: asset)
+        } catch {
+            throw TranscodeError.unsupportedInput(error.localizedDescription)
+        }
+        if let timeRange {
+            reader.timeRange = timeRange
+        }
+        let videoOutput = AVAssetReaderTrackOutput(
+            track: videoTrack,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    resolvedSettings.pixelFormat,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+            ]
+        )
+        videoOutput.alwaysCopiesSampleData = false
+        guard reader.canAdd(videoOutput) else {
+            throw TranscodeError.unsupportedInput("无法为多遍编码创建解码输出。")
+        }
+        reader.add(videoOutput)
+        guard reader.startReading() else {
+            throw TranscodeError.readerFailed(
+                reader.error?.localizedDescription ?? "startReading 返回 false"
+            )
+        }
+
+        var decodedFrames = 0
+        var submittedFrames = 0
+        while let sampleBuffer = videoOutput.copyNextSampleBuffer() {
+            try checkCancellation(cancellationToken)
+            decodedFrames += 1
+            let presentationTime = CMSampleBufferGetPresentationTimeStamp(
+                sampleBuffer
+            )
+            if let allowedTimeRanges,
+               !allowedTimeRanges.contains(where: {
+                   CMTimeRangeContainsTime($0, time: presentationTime)
+               })
+            {
+                continue
+            }
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+                throw TranscodeError.unsupportedInput(
+                    "解码输出没有 CVPixelBuffer。"
+                )
+            }
+            var duration = CMSampleBufferGetDuration(sampleBuffer)
+            if !duration.isNumeric || duration == .zero {
+                duration = CMTime(
+                    seconds: 1 / resolvedSettings.expectedFrameRate,
+                    preferredTimescale: 60_000
+                )
+            }
+            var infoFlags = VTEncodeInfoFlags()
+            let encodeStatus = VTCompressionSessionEncodeFrame(
+                compressionSession,
+                imageBuffer: pixelBuffer,
+                presentationTimeStamp: presentationTime,
+                duration: duration,
+                frameProperties: nil,
+                sourceFrameRefcon: nil,
+                infoFlagsOut: &infoFlags
+            )
+            guard encodeStatus == noErr else {
+                reader.cancelReading()
+                throw TranscodeError.frameEncodingFailed(encodeStatus)
+            }
+            submittedFrames += 1
+            if sourceDuration > 0, presentationTime.isNumeric {
+                let completed = max(
+                    0,
+                    CMTimeGetSeconds(
+                        CMTimeSubtract(presentationTime, sessionStartTime)
+                    )
+                )
+                let fraction = min(1, completed / sourceDuration)
+                progress(
+                    progressStart
+                        + (progressEnd - progressStart) * fraction
+                )
+            }
+        }
+        if reader.status == .failed {
+            throw TranscodeError.readerFailed(
+                reader.error?.localizedDescription ?? "未知 AVAssetReader 错误"
+            )
+        }
+        return VideoPassResult(
+            decodedFrames: decodedFrames,
+            submittedFrames: submittedFrames
+        )
+    }
+
+    private static func completeCompressionPass(
+        _ session: VTCompressionSession
+    ) throws {
+        let status = VTCompressionSessionCompleteFrames(
+            session,
+            untilPresentationTimeStamp: .invalid
+        )
+        guard status == noErr else {
+            throw TranscodeError.frameEncodingFailed(status)
+        }
+    }
+
+    private static func sourceStartTime(
+        videoTrack: AVAssetTrack,
+        nonVideoTracks: [AVAssetTrack],
+        timeRange: CMTimeRange?
+    ) async throws -> CMTime {
+        if let timeRange {
+            return timeRange.start
+        }
+        var earliestStart = CMTime.zero
+        for track in [videoTrack] + nonVideoTracks {
+            let start = try await track.load(.timeRange).start
+            if start.isNumeric,
+               (earliestStart == .zero
+                   || CMTimeCompare(start, earliestStart) < 0)
+            {
+                earliestStart = start
+            }
+        }
+        return earliestStart
+    }
+
+    private static func drainRemainingPassthroughSamples(
+        _ channels: [PassthroughChannel],
+        writer: AVAssetWriter,
+        cancellationToken: EncodingCancellationToken
+    ) throws -> Int {
+        var copiedSamples = 0
+        var lastProgressAt = ProcessInfo.processInfo.systemUptime
+        while channels.contains(where: { !$0.reachedEnd }) {
+            var madeProgress = false
+            for channel in channels {
+                if try channel.appendOneIfReady(
+                    through: .positiveInfinity,
+                    writer: writer
+                ) {
+                    copiedSamples += 1
+                    madeProgress = true
+                }
+            }
+            if madeProgress {
+                lastProgressAt = ProcessInfo.processInfo.systemUptime
+                continue
+            }
+            try checkCancellation(cancellationToken)
+            try checkWriterState(writer)
+            try checkPipelineStall(since: lastProgressAt)
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+        return copiedSamples
+    }
+
+    private static func multiPassPropertyWrite(
+        function: String,
+        status: OSStatus
+    ) -> PropertyWriteResult {
+        PropertyWriteResult(
+            key: "MultiPassStorage",
+            requestedValue: .string("VTMultiPassStorage"),
+            status: APICallResult(function: function, status: status)
         )
     }
 
@@ -863,6 +1647,26 @@ enum VideoTranscoder {
         guard status == noErr else {
             throw TranscodeError.propertyRejected(name, status)
         }
+    }
+
+    private static func appendOptionalProperty(
+        to writes: inout [PropertyWriteResult],
+        session: VTCompressionSession,
+        key: CFString,
+        name: String,
+        value: CFTypeRef
+    ) {
+        let status = VTSessionSetProperty(session, key: key, value: value)
+        writes.append(
+            PropertyWriteResult(
+                key: name,
+                requestedValue: JSONValue(foundationValue: value),
+                status: APICallResult(
+                    function: "VTSessionSetProperty(\(name))",
+                    status: status
+                )
+            )
+        )
     }
 
     private static func preservationChecks(
@@ -1155,6 +1959,22 @@ enum VideoTranscoder {
         return directory.appendingPathComponent(fileName)
     }
 
+    private static func makeEstimateOutputURL(
+        sourceFileName: String,
+        codecType: CMVideoCodecType
+    ) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoToolboxStudio", isDirectory: true)
+            .appendingPathComponent("Estimates", isDirectory: true)
+        let baseName = URL(fileURLWithPath: sourceFileName)
+            .deletingPathExtension()
+            .lastPathComponent
+        let codec = codecType == kCMVideoCodecType_HEVC ? "HEVC" : "H264"
+        return directory.appendingPathComponent(
+            "\(baseName)-\(codec)-\(UUID().uuidString).mov"
+        )
+    }
+
     private static func applySourceDates(
         from source: MediaAssetSummary,
         to output: URL
@@ -1214,15 +2034,134 @@ enum VideoTranscoder {
     }
 }
 
+private struct MultiPassUnavailable: Error {
+    let propertyWrite: PropertyWriteResult
+}
+
+private struct VideoPassResult {
+    let decodedFrames: Int
+    let submittedFrames: Int
+}
+
 private struct RuntimeTranscodeResult {
-    let propertyWrites: [PropertyWriteResult]
+    var propertyWrites: [PropertyWriteResult]
     let hardwarePropertyQuery: APICallResult
     let usesHardwareEncoder: Bool
     let decodedVideoFrames: Int
     let submittedVideoFrames: Int
     let encodedVideoFrames: Int
     let droppedVideoFrames: Int
+    let videoEncodingPasses: Int
     let copiedNonVideoSamples: Int
+}
+
+private final class FrameSiloWriterContext: @unchecked Sendable {
+    private let writer: AVAssetWriter
+    private let videoWriterInput: AVAssetWriterInput
+    private let passthroughChannels: [PassthroughChannel]
+    private let cancellationToken: EncodingCancellationToken
+    private let lock = NSLock()
+    private var storedError: TranscodeError?
+    private var storedEncodedFrames = 0
+    private var storedCopiedNonVideoSamples = 0
+
+    init(
+        writer: AVAssetWriter,
+        videoWriterInput: AVAssetWriterInput,
+        passthroughChannels: [PassthroughChannel],
+        cancellationToken: EncodingCancellationToken
+    ) {
+        self.writer = writer
+        self.videoWriterInput = videoWriterInput
+        self.passthroughChannels = passthroughChannels
+        self.cancellationToken = cancellationToken
+    }
+
+    var error: TranscodeError? {
+        lock.withLock { storedError }
+    }
+
+    var encodedFrames: Int {
+        lock.withLock { storedEncodedFrames }
+    }
+
+    var copiedNonVideoSamples: Int {
+        lock.withLock { storedCopiedNonVideoSamples }
+    }
+
+    func receive(_ sampleBuffer: CMSampleBuffer) -> OSStatus {
+        do {
+            let copiedSamples = try append(sampleBuffer)
+            lock.withLock {
+                storedEncodedFrames += 1
+                storedCopiedNonVideoSamples += copiedSamples
+            }
+            return noErr
+        } catch let error as TranscodeError {
+            lock.withLock {
+                if storedError == nil {
+                    storedError = error
+                }
+            }
+            return -1
+        } catch {
+            lock.withLock {
+                if storedError == nil {
+                    storedError = .writerFailed(error.localizedDescription)
+                }
+            }
+            return -1
+        }
+    }
+
+    private func append(_ sampleBuffer: CMSampleBuffer) throws -> Int {
+        let presentationTime = CMSampleBufferGetPresentationTimeStamp(
+            sampleBuffer
+        )
+        var copiedSamples = 0
+        var lastProgressAt = ProcessInfo.processInfo.systemUptime
+
+        while true {
+            if cancellationToken.isCancelled || Task.isCancelled {
+                throw TranscodeError.cancelled
+            }
+            if writer.status == .failed || writer.status == .cancelled {
+                throw TranscodeError.writerFailed(
+                    writer.error?.localizedDescription ?? "AVAssetWriter 已停止"
+                )
+            }
+
+            var madeProgress = false
+            for channel in passthroughChannels {
+                while try channel.appendOneIfReady(
+                    through: presentationTime,
+                    writer: writer
+                ) {
+                    copiedSamples += 1
+                    madeProgress = true
+                }
+            }
+            if videoWriterInput.isReadyForMoreMediaData {
+                guard videoWriterInput.append(sampleBuffer) else {
+                    throw TranscodeError.writerFailed(
+                        writer.error?.localizedDescription
+                            ?? "多遍视频轨道 append 返回 false"
+                    )
+                }
+                return copiedSamples
+            }
+            if madeProgress {
+                lastProgressAt = ProcessInfo.processInfo.systemUptime
+                continue
+            }
+            if ProcessInfo.processInfo.systemUptime - lastProgressAt > 30 {
+                throw TranscodeError.writerFailed(
+                    "多遍最终码流连续 30 秒无法写入。"
+                )
+            }
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+    }
 }
 
 private final class PassthroughChannel {
@@ -1294,10 +2233,17 @@ private final class TranscodeCallbackContext: @unchecked Sendable {
     private var encodedFrames = 0
     private var droppedFrames = 0
     private var failure: TranscodeError?
+    private var frameSilo: VTFrameSilo?
 
     var pendingSampleCount: Int {
         lock.withLock {
             pendingSamples.count - nextPendingSampleIndex
+        }
+    }
+
+    func routeOutput(to frameSilo: VTFrameSilo) {
+        lock.withLock {
+            self.frameSilo = frameSilo
         }
     }
 
@@ -1325,6 +2271,18 @@ private final class TranscodeCallbackContext: @unchecked Sendable {
                 failure = .writerFailed("编码回调没有返回可用 Sample Buffer。")
                 return
             }
+            if let frameSilo {
+                let status = VTFrameSiloAddSampleBuffer(
+                    frameSilo,
+                    sampleBuffer: sampleBuffer
+                )
+                if status != noErr {
+                    failure = .writerFailed(
+                        "多遍码流暂存失败（OSStatus \(status)）。"
+                    )
+                }
+                return
+            }
             pendingSamples.append(sampleBuffer)
         }
     }
@@ -1342,7 +2300,7 @@ private final class TranscodeCallbackContext: @unchecked Sendable {
             }
             return false
         }
-            let sample: CMSampleBuffer? = lock.withLock {
+        let sample: CMSampleBuffer? = lock.withLock {
             guard nextPendingSampleIndex < pendingSamples.count else {
                 return nil
             }

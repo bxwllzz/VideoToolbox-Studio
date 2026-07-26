@@ -231,7 +231,33 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "相册缩略图没有完整显示大小、分辨率、编码类型与码率：\(video.label)"
         )
         let sourceLabel = video.label
+
+        let selectButton = app.buttons["选择"]
+        XCTAssertTrue(selectButton.waitForExistence(timeout: 10))
+        selectButton.tap()
         video.tap()
+        let selected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "selected == true"),
+            object: video
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [selected], timeout: 10),
+            .completed,
+            "进入多选后，缩略图没有暴露已选择状态。"
+        )
+        XCTAssertTrue(
+            app.navigationBars["已选择 1 项"].waitForExistence(timeout: 10),
+            "多选标题没有更新选择数量。"
+        )
+
+        let selectionScreenshot = XCTAttachment(screenshot: app.screenshot())
+        selectionScreenshot.name = "相册缩略图参数与多选标记"
+        selectionScreenshot.lifetime = .keepAlways
+        add(selectionScreenshot)
+
+        let nextButton = app.buttons["下一步"]
+        XCTAssertTrue(nextButton.waitForExistence(timeout: 10))
+        nextButton.tap()
 
         let runButton = app.buttons["transcode-start"]
         makeHittable(runButton, in: app)
@@ -263,22 +289,49 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         let metrics = app.staticTexts["cloud-transcode-metrics"]
         makeHittable(metrics, in: app)
         XCTAssertTrue(metrics.waitForExistence(timeout: 30))
+        let multiPass = app.staticTexts["cloud-transcode-multipass"]
+        makeHittable(multiPass, in: app)
+        XCTAssertTrue(
+            multiPass.waitForExistence(timeout: 30),
+            "没有回收到多遍编码实际执行或回退证据。"
+        )
         XCTAssertTrue(
             summary.label.contains("1/1")
                 && summary.label.contains("保真核验通过"),
             "真实转码或输出复核没有通过：\(summary.label)"
         )
         XCTAssertTrue(
-            metrics.label.contains("300 帧"),
-            "10 秒 30 fps 素材没有完整输出 300 帧：\(metrics.label)"
+            metrics.label.contains("300 帧")
+                && metrics.label.contains("遍"),
+            "10 秒 30 fps 素材没有完整输出 300 帧或编码遍次证据：\(metrics.label)"
+        )
+        let summaryLabel = summary.label
+        let metricsLabel = metrics.label
+        let multiPassLabel = multiPass.label
+        let photoSaveSuccess = app.staticTexts["photo-save-success"]
+        makeHittable(photoSaveSuccess, in: app)
+        XCTAssertTrue(
+            photoSaveSuccess.waitForExistence(timeout: 30),
+            "转换完成后没有默认保存到系统照片库。"
+        )
+
+        let settingsNavigationBar = app.navigationBars["压缩设置"]
+        let backButton = settingsNavigationBar.buttons.firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+        backButton.tap()
+        let preparationOverlay = app.otherElements["video-preparation-overlay"]
+        XCTAssertFalse(
+            preparationOverlay.waitForExistence(timeout: 3),
+            "返回视频首页后，准备进度遮罩仍然停留。"
         )
 
         let report: [String: String] = [
             "schema_version": "1.0",
             "source": "system-photo-library",
             "source_metadata": sourceLabel,
-            "summary": summary.label,
-            "metrics": metrics.label,
+            "summary": summaryLabel,
+            "metrics": metricsLabel,
+            "multi_pass": multiPassLabel,
             "runner_device_model": UIDevice.current.model,
             "runner_system_name": UIDevice.current.systemName,
             "runner_system_version": UIDevice.current.systemVersion,

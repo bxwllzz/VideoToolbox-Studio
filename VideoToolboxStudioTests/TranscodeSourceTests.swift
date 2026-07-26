@@ -24,6 +24,7 @@ final class TranscodeSourceTests: XCTestCase {
         XCTAssertEqual(source.fileName, "输入视频.mov")
         XCTAssertEqual(source.fileSize, Int64(bytes.count))
         XCTAssertEqual(source.securityScopedURL, sourceURL)
+        XCTAssertNil(source.photoLibraryAssetIdentifier)
         XCTAssertEqual((source.asset as? AVURLAsset)?.url, sourceURL)
     }
 
@@ -35,13 +36,18 @@ final class TranscodeSourceTests: XCTestCase {
             fileName: "相册视频.mov",
             fileSize: 1024,
             creationDate: nil,
-            modificationDate: nil
+            modificationDate: nil,
+            photoLibraryAssetIdentifier: "photo-library-id"
         )
 
         XCTAssertEqual(source.id, "photo-library-id")
         XCTAssertEqual(source.fileName, "相册视频.mov")
         XCTAssertEqual(source.fileSize, 1024)
         XCTAssertNil(source.securityScopedURL)
+        XCTAssertEqual(
+            source.photoLibraryAssetIdentifier,
+            "photo-library-id"
+        )
         XCTAssertTrue(source.asset === asset)
     }
 }

@@ -5,6 +5,7 @@ struct TranscodeMetrics: Codable, Equatable, Sendable {
     let submittedVideoFrames: Int
     let encodedVideoFrames: Int
     let droppedVideoFrames: Int
+    let videoEncodingPasses: Int
     let copiedNonVideoSamples: Int
     let wallClockSeconds: Double
     let sourceDurationSeconds: Double

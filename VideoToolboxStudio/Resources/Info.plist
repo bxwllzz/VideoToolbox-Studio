@@ -33,9 +33,9 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>用于在主界面显示相册视频，并在你选择后进行纯本地视频转换。</string>
+    <string>用于显示并读取你选择的相册视频、保存压缩结果；仅在你点击删除并通过系统确认后删除原视频。</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>用于将你确认保存的视频写入照片库；云端真机回归也会写入内置测试视频。</string>
+    <string>用于在压缩和保真核验成功后将结果视频写入照片库。</string>
     <key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
     <true/>
     <key>UIApplicationSupportsIndirectInputEvents</key>

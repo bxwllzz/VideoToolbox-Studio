@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -26,6 +29,8 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: 安装固定版本 XcodeGen
         run: scripts/install-xcodegen.sh
@@ -35,15 +40,25 @@ jobs:
 
       - name: 计算构建身份
         id: identity
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           build_timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          if [[ -n "${PR_NUMBER}" ]]; then
+            artifact_scope="PR${PR_NUMBER}"
+          else
+            artifact_scope="main"
+          fi
           echo "build_timestamp=${build_timestamp}" >> "${GITHUB_OUTPUT}"
-          echo "short_sha=${GITHUB_SHA:0:12}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_scope=${artifact_scope}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${SOURCE_SHA:0:12}" >> "${GITHUB_OUTPUT}"
 
       - name: 编译无签名真机版本
         env:
           BUILD_TIMESTAMP: ${{ steps.identity.outputs.build_timestamp }}
+          BUILD_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           mkdir -p build/logs
@@ -58,7 +73,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_IDENTITY="" \
-            BUILD_COMMIT_SHA="${GITHUB_SHA}" \
+            BUILD_COMMIT_SHA="${BUILD_SOURCE_SHA}" \
             BUILD_TIMESTAMP="${BUILD_TIMESTAMP}" \
             BUILD_RUN_ID="${GITHUB_RUN_ID}" \
             BUILD_RUN_NUMBER="${GITHUB_RUN_NUMBER}" \
@@ -68,7 +83,7 @@ jobs:
 
       - name: 生成构建信息与 IPA
         env:
-          BUILD_COMMIT_SHA: ${{ github.sha }}
+          BUILD_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BUILD_TIMESTAMP: ${{ steps.identity.outputs.build_timestamp }}
           BUILD_RUN_ID: ${{ github.run_id }}
           BUILD_RUN_NUMBER: ${{ github.run_number }}
@@ -85,7 +100,7 @@ jobs:
       - name: 上传 SideStore 安装包
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: VideoToolboxStudio-${{ github.run_number }}-${{ steps.identity.outputs.short_sha }}
+          name: VideoToolboxStudio-${{ steps.identity.outputs.artifact_scope }}-${{ github.run_number }}-${{ steps.identity.outputs.short_sha }}
           path: build/artifact
           if-no-files-found: error
           retention-days: 14
