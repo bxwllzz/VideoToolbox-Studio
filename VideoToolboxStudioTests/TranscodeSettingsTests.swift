@@ -27,7 +27,8 @@ final class TranscodeSettingsTests: XCTestCase {
 
         XCTAssertEqual(resolved.averageBitRate, 6_000_000)
         XCTAssertNil(resolved.quality)
-        XCTAssertEqual(resolved.maxKeyFrameInterval, 60)
+        XCTAssertEqual(resolved.maxKeyFrameInterval, 0)
+        XCTAssertEqual(resolved.maxKeyFrameIntervalDuration, 2)
         XCTAssertEqual(resolved.codecFourCC, "hvc1")
     }
 
@@ -50,7 +51,48 @@ final class TranscodeSettingsTests: XCTestCase {
 
         XCTAssertNil(resolved.averageBitRate)
         XCTAssertEqual(resolved.quality, 0.83)
-        XCTAssertNil(resolved.dataRateLimits)
+        XCTAssertEqual(resolved.dataRateLimits, [1_875_000, 1])
+    }
+
+    func test质量模式峰值限制相对原视频平均码率() {
+        let source = makeVideoSummary(
+            bitRate: 12_000_000,
+            frameRate: 30,
+            isHDR: false
+        )
+        var settings = TranscodeSettings.balanced
+        settings.rateControl = .quality
+        settings.dataRateLimitMultiplier = 1.25
+
+        let resolved = VideoTranscoder.resolve(
+            settings: settings,
+            sourceVideo: source,
+            codecType: kCMVideoCodecType_HEVC,
+            isHDR: false
+        )
+
+        XCTAssertEqual(resolved.dataRateLimits, [1_875_000, 1])
+    }
+
+    func test两个关键帧约束保持独立() {
+        let source = makeVideoSummary(
+            bitRate: 10_000_000,
+            frameRate: 60,
+            isHDR: false
+        )
+        var settings = TranscodeSettings.balanced
+        settings.maxKeyFrameInterval = 90
+        settings.maxKeyFrameIntervalDuration = 2
+
+        let resolved = VideoTranscoder.resolve(
+            settings: settings,
+            sourceVideo: source,
+            codecType: kCMVideoCodecType_HEVC,
+            isHDR: false
+        )
+
+        XCTAssertEqual(resolved.maxKeyFrameInterval, 90)
+        XCTAssertEqual(resolved.maxKeyFrameIntervalDuration, 2)
     }
 
     func testHDR输入拒绝H264() {

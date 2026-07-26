@@ -90,6 +90,7 @@ enum VideoTranscoder {
                 sourceColor: sourceVideoSummary.color,
                 cancellationToken: cancellationToken,
                 sourceDuration: inputSummary.durationSeconds,
+                timeRange: nil,
                 progress: progress
             )
 
@@ -176,6 +177,99 @@ enum VideoTranscoder {
         }
     }
 
+    static func estimateOutputSize(
+        source: TranscodeSource,
+        settings: TranscodeSettings,
+        cancellationToken: EncodingCancellationToken,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> TranscodeSizeEstimate {
+        try settings.validate()
+        try checkCancellation(cancellationToken)
+
+        let inputSummary = try await MediaInspector.inspect(source)
+        guard let sourceVideoSummary = inputSummary.videoTracks.first else {
+            throw TranscodeError.unsupportedInput("没有找到视频轨道。")
+        }
+        guard inputSummary.durationSeconds.isFinite,
+              inputSummary.durationSeconds > 0
+        else {
+            throw TranscodeError.unsupportedInput("视频时长无效，无法估算。")
+        }
+
+        let tracks = try await source.asset.load(.tracks)
+        guard let videoTrack = tracks.first(where: { $0.mediaType == .video }) else {
+            throw TranscodeError.unsupportedInput("没有找到视频轨道。")
+        }
+        let nonVideoTracks = tracks.filter { $0.mediaType != .video }
+        let isHDR = sourceVideoSummary.color?.isHDR == true
+        let codecType = try settings.targetCodec.resolvedCodecType(isHDR: isHDR)
+        let resolvedSettings = resolve(
+            settings: settings,
+            sourceVideo: sourceVideoSummary,
+            codecType: codecType,
+            isHDR: isHDR
+        )
+
+        let sampleDuration = min(5, inputSummary.durationSeconds)
+        let sampleStart = sourceVideoSummary.timeRangeStartSeconds
+            + max(0, (inputSummary.durationSeconds - sampleDuration) / 2)
+        let sampleRange = CMTimeRange(
+            start: CMTime(seconds: sampleStart, preferredTimescale: 60_000),
+            duration: CMTime(seconds: sampleDuration, preferredTimescale: 60_000)
+        )
+        let outputURL = try makeEstimateOutputURL(
+            sourceFileName: source.fileName,
+            codecType: codecType
+        )
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.removeItem(at: outputURL)
+        defer {
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        _ = try await encode(
+            asset: source.asset,
+            videoTrack: videoTrack,
+            nonVideoTracks: nonVideoTracks,
+            outputURL: outputURL,
+            resolvedSettings: resolvedSettings,
+            sourceColor: sourceVideoSummary.color,
+            cancellationToken: cancellationToken,
+            sourceDuration: sampleDuration,
+            timeRange: sampleRange,
+            progress: progress
+        )
+        let sampleSummary = try await MediaInspector.inspect(outputURL)
+        let measuredDuration = max(0.001, sampleSummary.durationSeconds)
+        let estimatedBytes = Int64(
+            (Double(sampleSummary.fileSize)
+                * inputSummary.durationSeconds / measuredDuration).rounded()
+        )
+        let uncertainty = settings.rateControl == .quality ? 0.30 : 0.15
+        let lowerBound = Int64(
+            (Double(estimatedBytes) * (1 - uncertainty)).rounded()
+        )
+        let upperBound = Int64(
+            (Double(estimatedBytes) * (1 + uncertainty)).rounded()
+        )
+        let ratio = inputSummary.fileSize > 0
+            ? Double(estimatedBytes) / Double(inputSummary.fileSize)
+            : nil
+
+        return TranscodeSizeEstimate(
+            sourceFileName: source.fileName,
+            sampledDurationSeconds: measuredDuration,
+            sourceDurationSeconds: inputSummary.durationSeconds,
+            estimatedOutputBytes: estimatedBytes,
+            lowerBoundBytes: max(0, lowerBound),
+            upperBoundBytes: max(0, upperBound),
+            estimatedOutputToInputRatio: ratio
+        )
+    }
+
     static func resolve(
         settings: TranscodeSettings,
         sourceVideo: MediaTrackSummary,
@@ -200,15 +294,11 @@ enum VideoTranscoder {
             quality = settings.quality
         }
 
-        let dataRateLimits = averageBitRate.flatMap { bitRate in
-            settings.dataRateLimitMultiplier.map { multiplier in
-                [Double(bitRate) * multiplier / 8, 1]
-            }
+        let dataRateLimits = settings.dataRateLimitMultiplier.map { multiplier in
+            let limitBaseBitRate = averageBitRate ?? sourceBitRate
+            return [Double(limitBaseBitRate) * multiplier / 8, 1]
         }
         let frameRate = max(1, sourceVideo.nominalFrameRate)
-        let keyFrameInterval = settings.maxKeyFrameInterval > 0
-            ? settings.maxKeyFrameInterval
-            : max(1, Int((frameRate * settings.maxKeyFrameIntervalDuration).rounded()))
         let profileLevel: String
         let pixelFormat: OSType
         if codecType == kCMVideoCodecType_HEVC {
@@ -233,7 +323,7 @@ enum VideoTranscoder {
             quality: quality,
             dataRateLimits: dataRateLimits,
             expectedFrameRate: frameRate,
-            maxKeyFrameInterval: keyFrameInterval,
+            maxKeyFrameInterval: settings.maxKeyFrameInterval,
             maxKeyFrameIntervalDuration: settings.maxKeyFrameIntervalDuration,
             allowFrameReordering: settings.allowFrameReordering,
             realTime: settings.realTime,
@@ -250,6 +340,7 @@ enum VideoTranscoder {
         sourceColor: MediaColorSummary?,
         cancellationToken: EncodingCancellationToken,
         sourceDuration: Double,
+        timeRange: CMTimeRange?,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> RuntimeTranscodeResult {
         let reader: AVAssetReader
@@ -259,6 +350,9 @@ enum VideoTranscoder {
             writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         } catch {
             throw TranscodeError.unsupportedInput(error.localizedDescription)
+        }
+        if let timeRange {
+            reader.timeRange = timeRange
         }
 
         writer.metadata = try await asset.load(.metadata)
@@ -352,15 +446,22 @@ enum VideoTranscoder {
             )
         }
 
-        let allTracks = [videoTrack] + nonVideoTracks
-        var sessionStartTime = CMTime.zero
-        for track in allTracks {
-            let start = try await track.load(.timeRange).start
-            if start.isNumeric,
-               (sessionStartTime == .zero || CMTimeCompare(start, sessionStartTime) < 0)
-            {
-                sessionStartTime = start
+        let sessionStartTime: CMTime
+        if let timeRange {
+            sessionStartTime = timeRange.start
+        } else {
+            let allTracks = [videoTrack] + nonVideoTracks
+            var earliestStart = CMTime.zero
+            for track in allTracks {
+                let start = try await track.load(.timeRange).start
+                if start.isNumeric,
+                   (earliestStart == .zero
+                       || CMTimeCompare(start, earliestStart) < 0)
+                {
+                    earliestStart = start
+                }
             }
+            sessionStartTime = earliestStart
         }
 
         guard writer.startWriting() else {
@@ -1153,6 +1254,22 @@ enum VideoTranscoder {
         formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
         let fileName = "\(baseName)-\(codec)-\(formatter.string(from: Date())).mov"
         return directory.appendingPathComponent(fileName)
+    }
+
+    private static func makeEstimateOutputURL(
+        sourceFileName: String,
+        codecType: CMVideoCodecType
+    ) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VideoToolboxStudio", isDirectory: true)
+            .appendingPathComponent("Estimates", isDirectory: true)
+        let baseName = URL(fileURLWithPath: sourceFileName)
+            .deletingPathExtension()
+            .lastPathComponent
+        let codec = codecType == kCMVideoCodecType_HEVC ? "HEVC" : "H264"
+        return directory.appendingPathComponent(
+            "\(baseName)-\(codec)-\(UUID().uuidString).mov"
+        )
     }
 
     private static func applySourceDates(

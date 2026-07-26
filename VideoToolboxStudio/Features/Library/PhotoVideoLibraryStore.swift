@@ -480,7 +480,8 @@ private enum PhotoVideoSourceProvider {
             fileName: safeName,
             fileSize: fileSize,
             creationDate: asset.creationDate,
-            modificationDate: asset.modificationDate
+            modificationDate: asset.modificationDate,
+            photoLibraryAssetIdentifier: asset.localIdentifier
         )
     }
 

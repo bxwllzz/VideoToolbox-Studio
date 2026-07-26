@@ -11,6 +11,7 @@ struct TranscodeSource: Identifiable, @unchecked Sendable {
     let creationDate: Date?
     let modificationDate: Date?
     let securityScopedURL: URL?
+    let photoLibraryAssetIdentifier: String?
 
     init(
         id: String,
@@ -19,7 +20,8 @@ struct TranscodeSource: Identifiable, @unchecked Sendable {
         fileSize: Int64?,
         creationDate: Date?,
         modificationDate: Date?,
-        securityScopedURL: URL? = nil
+        securityScopedURL: URL? = nil,
+        photoLibraryAssetIdentifier: String? = nil
     ) {
         self.id = id
         self.asset = asset
@@ -28,6 +30,7 @@ struct TranscodeSource: Identifiable, @unchecked Sendable {
         self.creationDate = creationDate
         self.modificationDate = modificationDate
         self.securityScopedURL = securityScopedURL
+        self.photoLibraryAssetIdentifier = photoLibraryAssetIdentifier
     }
 
     static func localFile(_ url: URL) -> TranscodeSource {
@@ -45,7 +48,8 @@ struct TranscodeSource: Identifiable, @unchecked Sendable {
             fileSize: values?.fileSize.map { Int64($0) },
             creationDate: values?.creationDate,
             modificationDate: values?.contentModificationDate,
-            securityScopedURL: url
+            securityScopedURL: url,
+            photoLibraryAssetIdentifier: nil
         )
     }
 }
@@ -311,6 +315,16 @@ struct ResolvedTranscodeSettings: Codable, Equatable, Sendable {
     let allowFrameReordering: Bool
     let realTime: Bool
     let prioritizeEncodingSpeedOverQuality: Bool
+}
+
+struct TranscodeSizeEstimate: Equatable, Sendable {
+    let sourceFileName: String
+    let sampledDurationSeconds: Double
+    let sourceDurationSeconds: Double
+    let estimatedOutputBytes: Int64
+    let lowerBoundBytes: Int64
+    let upperBoundBytes: Int64
+    let estimatedOutputToInputRatio: Double?
 }
 
 enum TranscodeError: LocalizedError, Equatable {
