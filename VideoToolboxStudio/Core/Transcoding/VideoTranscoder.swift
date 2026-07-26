@@ -10,6 +10,8 @@ enum VideoTranscoder {
         settings: TranscodeSettings,
         buildReport: BuildReport,
         cancellationToken: EncodingCancellationToken,
+        diagnostics:
+            @escaping @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void = { _ in },
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> TranscodeResult {
         try await transcode(
@@ -17,6 +19,7 @@ enum VideoTranscoder {
             settings: settings,
             buildReport: buildReport,
             cancellationToken: cancellationToken,
+            diagnostics: diagnostics,
             progress: progress
         )
     }
@@ -26,6 +29,8 @@ enum VideoTranscoder {
         settings: TranscodeSettings,
         buildReport: BuildReport,
         cancellationToken: EncodingCancellationToken,
+        diagnostics:
+            @escaping @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void = { _ in },
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> TranscodeResult {
         try settings.validate()
@@ -91,6 +96,7 @@ enum VideoTranscoder {
                 cancellationToken: cancellationToken,
                 sourceDuration: inputSummary.durationSeconds,
                 timeRange: nil,
+                diagnostics: diagnostics,
                 progress: progress
             )
 
@@ -124,6 +130,8 @@ enum VideoTranscoder {
                 droppedVideoFrames: runtimeResult.droppedVideoFrames,
                 videoEncodingPasses: runtimeResult.videoEncodingPasses,
                 copiedNonVideoSamples: runtimeResult.copiedNonVideoSamples,
+                writerSessionStartSeconds:
+                    runtimeResult.writerSessionStartSeconds,
                 wallClockSeconds: wallClockSeconds,
                 sourceDurationSeconds: inputSummary.durationSeconds,
                 processingFramesPerSecond: wallClockSeconds > 0
@@ -134,7 +142,7 @@ enum VideoTranscoder {
                 outputToInputSizeRatio: ratio
             )
             let report = TranscodeReport(
-                schemaVersion: "1.3",
+                schemaVersion: "1.4",
                 generatedAt: ISO8601DateFormatter().string(from: Date()),
                 app: AppIdentity(
                     version: buildReport.appVersion,
@@ -154,6 +162,7 @@ enum VideoTranscoder {
                 input: inputSummary,
                 output: outputSummary,
                 propertyWrites: runtimeResult.propertyWrites,
+                runtimeDiagnostics: runtimeResult.runtimeDiagnostics,
                 hardwarePropertyQuery: runtimeResult.hardwarePropertyQuery,
                 usesHardwareEncoder: runtimeResult.usesHardwareEncoder,
                 metrics: metrics,
@@ -241,6 +250,7 @@ enum VideoTranscoder {
             cancellationToken: cancellationToken,
             sourceDuration: sampleDuration,
             timeRange: sampleRange,
+            diagnostics: { _ in },
             progress: progress
         )
         let sampleSummary = try await MediaInspector.inspect(outputURL)
@@ -346,6 +356,8 @@ enum VideoTranscoder {
         cancellationToken: EncodingCancellationToken,
         sourceDuration: Double,
         timeRange: CMTimeRange?,
+        diagnostics:
+            @escaping @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> RuntimeTranscodeResult {
         guard resolvedSettings.multiPassStorageEnabled else {
@@ -359,6 +371,7 @@ enum VideoTranscoder {
                 cancellationToken: cancellationToken,
                 sourceDuration: sourceDuration,
                 timeRange: timeRange,
+                diagnostics: diagnostics,
                 progress: progress
             )
         }
@@ -374,6 +387,7 @@ enum VideoTranscoder {
                 cancellationToken: cancellationToken,
                 sourceDuration: sourceDuration,
                 timeRange: timeRange,
+                diagnostics: diagnostics,
                 progress: progress
             )
         } catch let unavailable as MultiPassUnavailable {
@@ -388,6 +402,7 @@ enum VideoTranscoder {
                 cancellationToken: cancellationToken,
                 sourceDuration: sourceDuration,
                 timeRange: timeRange,
+                diagnostics: diagnostics,
                 progress: progress
             )
             result.propertyWrites.insert(unavailable.propertyWrite, at: 0)
@@ -405,6 +420,8 @@ enum VideoTranscoder {
         cancellationToken: EncodingCancellationToken,
         sourceDuration: Double,
         timeRange: CMTimeRange?,
+        diagnostics:
+            @escaping @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> RuntimeTranscodeResult {
         let reader: AVAssetReader
@@ -510,36 +527,42 @@ enum VideoTranscoder {
             )
         }
 
-        let sessionStartTime: CMTime
-        if let timeRange {
-            sessionStartTime = timeRange.start
-        } else {
-            let allTracks = [videoTrack] + nonVideoTracks
-            var earliestStart = CMTime.zero
-            for track in allTracks {
-                let start = try await track.load(.timeRange).start
-                if start.isNumeric,
-                   (earliestStart == .zero
-                       || CMTimeCompare(start, earliestStart) < 0)
-                {
-                    earliestStart = start
-                }
-            }
-            sessionStartTime = earliestStart
-        }
-
-        guard writer.startWriting() else {
-            throw TranscodeError.writerFailed(
-                writer.error?.localizedDescription ?? "startWriting 返回 false"
-            )
-        }
-        writer.startSession(atSourceTime: sessionStartTime)
+        let nominalSessionStartTime = try await sourceStartTime(
+            videoTrack: videoTrack,
+            nonVideoTracks: nonVideoTracks,
+            timeRange: timeRange
+        )
         guard reader.startReading() else {
             writer.cancelWriting()
             throw TranscodeError.readerFailed(
                 reader.error?.localizedDescription ?? "startReading 返回 false"
             )
         }
+        for channel in passthroughChannels {
+            channel.prime()
+        }
+        if reader.status == .failed {
+            writer.cancelWriting()
+            throw TranscodeError.readerFailed(
+                reader.error?.localizedDescription ?? "预读非视频轨道失败"
+            )
+        }
+        let sessionStartTime = resolvedWriterSessionStartTime(
+            nominalStart: nominalSessionStartTime,
+            firstSampleTimes: passthroughChannels.compactMap(
+                \.pendingPresentationTime
+            )
+        )
+        for channel in passthroughChannels {
+            channel.setWriterSessionStartTime(sessionStartTime)
+        }
+        guard writer.startWriting() else {
+            reader.cancelReading()
+            throw TranscodeError.writerFailed(
+                writer.error?.localizedDescription ?? "startWriting 返回 false"
+            )
+        }
+        writer.startSession(atSourceTime: sessionStartTime)
         reportStage("reader-writer-started", progress: 0.02, callback: progress)
 
         let callbackContext = TranscodeCallbackContext()
@@ -574,6 +597,10 @@ enum VideoTranscoder {
         defer {
             VTCompressionSessionInvalidate(compressionSession)
         }
+        let diagnosticsMonitor = RuntimeDiagnosticsMonitor(
+            session: compressionSession,
+            callback: diagnostics
+        )
 
         let propertyWrites = try configure(
             compressionSession,
@@ -589,6 +616,10 @@ enum VideoTranscoder {
             throw TranscodeError.frameEncodingFailed(prepareStatus)
         }
         reportStage("encoder-prepared", progress: 0.03, callback: progress)
+        diagnosticsMonitor.capture(
+            stage: "encoder-prepared",
+            progress: 0.03
+        )
 
         var decodedVideoFrames = 0
         var submittedVideoFrames = 0
@@ -662,7 +693,15 @@ enum VideoTranscoder {
                             sessionStartTime
                         ))
                     )
-                    progress(min(0.96, 0.03 + 0.93 * completed / sourceDuration))
+                    let currentProgress = min(
+                        0.96,
+                        0.03 + 0.93 * completed / sourceDuration
+                    )
+                    progress(currentProgress)
+                    diagnosticsMonitor.captureProgressIfNeeded(
+                        currentProgress,
+                        stage: "single-pass-encoding"
+                    )
                 }
             } catch {
                 reader.cancelReading()
@@ -682,6 +721,10 @@ enum VideoTranscoder {
             throw TranscodeError.frameEncodingFailed(completeStatus)
         }
         try callbackContext.throwIfFailed()
+        diagnosticsMonitor.capture(
+            stage: "frames-completed",
+            progress: 0.965
+        )
         copiedNonVideoSamples += try drainAllRemainingSamples(
             callbackContext: callbackContext,
             videoWriterInput: videoWriterInput,
@@ -712,6 +755,10 @@ enum VideoTranscoder {
             )
         }
         reportStage("writer-finished", progress: 0.985, callback: progress)
+        diagnosticsMonitor.capture(
+            stage: "writer-finished",
+            progress: 0.985
+        )
 
         var hardwareValue: CFTypeRef?
         let hardwareStatus = VTSessionCopyProperty(
@@ -739,6 +786,7 @@ enum VideoTranscoder {
 
         return RuntimeTranscodeResult(
             propertyWrites: propertyWrites,
+            runtimeDiagnostics: diagnosticsMonitor.snapshots,
             hardwarePropertyQuery: APICallResult(
                 function: "VTSessionCopyProperty(UsingHardwareAcceleratedVideoEncoder)",
                 status: hardwareStatus
@@ -749,7 +797,8 @@ enum VideoTranscoder {
             encodedVideoFrames: callbackSnapshot.encodedFrames,
             droppedVideoFrames: callbackSnapshot.droppedFrames,
             videoEncodingPasses: 1,
-            copiedNonVideoSamples: copiedNonVideoSamples
+            copiedNonVideoSamples: copiedNonVideoSamples,
+            writerSessionStartSeconds: CMTimeGetSeconds(sessionStartTime)
         )
     }
 
@@ -763,6 +812,8 @@ enum VideoTranscoder {
         cancellationToken: EncodingCancellationToken,
         sourceDuration: Double,
         timeRange: CMTimeRange?,
+        diagnostics:
+            @escaping @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> RuntimeTranscodeResult {
         let writer: AVAssetWriter
@@ -945,6 +996,10 @@ enum VideoTranscoder {
         defer {
             VTCompressionSessionInvalidate(compressionSession)
         }
+        let diagnosticsMonitor = RuntimeDiagnosticsMonitor(
+            session: compressionSession,
+            callback: diagnostics
+        )
 
         var propertyWrites = try configure(
             compressionSession,
@@ -982,6 +1037,10 @@ enum VideoTranscoder {
             )
         }
         reportStage("multipass-prepared", progress: 0.03, callback: progress)
+        diagnosticsMonitor.capture(
+            stage: "multipass-prepared",
+            progress: 0.03
+        )
 
         let beginStatus = VTCompressionSessionBeginPass(
             compressionSession,
@@ -1008,6 +1067,7 @@ enum VideoTranscoder {
             progressEnd: 0.46,
             sourceDuration: sourceDuration,
             sessionStartTime: sessionStartTime,
+            diagnosticsMonitor: diagnosticsMonitor,
             progress: progress
         )
         try completeCompressionPass(compressionSession)
@@ -1072,6 +1132,7 @@ enum VideoTranscoder {
                 progressEnd: 0.89,
                 sourceDuration: sourceDuration,
                 sessionStartTime: sessionStartTime,
+                diagnosticsMonitor: diagnosticsMonitor,
                 progress: progress
             )
             try completeCompressionPass(compressionSession)
@@ -1086,13 +1147,11 @@ enum VideoTranscoder {
             }
             passCount = 2
         }
+        diagnosticsMonitor.capture(
+            stage: "multipass-encoding-completed",
+            progress: 0.89
+        )
 
-        guard writer.startWriting() else {
-            throw TranscodeError.writerFailed(
-                writer.error?.localizedDescription ?? "startWriting 返回 false"
-            )
-        }
-        writer.startSession(atSourceTime: sessionStartTime)
         if let passthroughReader,
            !passthroughReader.startReading()
         {
@@ -1102,8 +1161,38 @@ enum VideoTranscoder {
                     ?? "非视频轨道 startReading 返回 false"
             )
         }
+        for channel in passthroughChannels {
+            channel.prime()
+        }
+        if passthroughReader?.status == .failed {
+            writer.cancelWriting()
+            throw TranscodeError.readerFailed(
+                passthroughReader?.error?.localizedDescription
+                    ?? "预读非视频轨道失败"
+            )
+        }
+        let writerSessionStartTime = resolvedWriterSessionStartTime(
+            nominalStart: sessionStartTime,
+            firstSampleTimes: passthroughChannels.compactMap(
+                \.pendingPresentationTime
+            )
+        )
+        for channel in passthroughChannels {
+            channel.setWriterSessionStartTime(writerSessionStartTime)
+        }
+        guard writer.startWriting() else {
+            passthroughReader?.cancelReading()
+            throw TranscodeError.writerFailed(
+                writer.error?.localizedDescription ?? "startWriting 返回 false"
+            )
+        }
+        writer.startSession(atSourceTime: writerSessionStartTime)
 
         reportStage("multipass-write-final", progress: 0.90, callback: progress)
+        diagnosticsMonitor.capture(
+            stage: "multipass-writing-final-stream",
+            progress: 0.90
+        )
         let siloWriter = FrameSiloWriterContext(
             writer: writer,
             videoWriterInput: videoWriterInput,
@@ -1149,6 +1238,10 @@ enum VideoTranscoder {
                 writer.error?.localizedDescription ?? "finishWriting 未完成"
             )
         }
+        diagnosticsMonitor.capture(
+            stage: "writer-finished",
+            progress: 0.985
+        )
 
         var hardwareValue: CFTypeRef?
         let hardwareStatus = VTSessionCopyProperty(
@@ -1176,6 +1269,7 @@ enum VideoTranscoder {
 
         return RuntimeTranscodeResult(
             propertyWrites: propertyWrites,
+            runtimeDiagnostics: diagnosticsMonitor.snapshots,
             hardwarePropertyQuery: APICallResult(
                 function: "VTSessionCopyProperty(UsingHardwareAcceleratedVideoEncoder)",
                 status: hardwareStatus
@@ -1187,7 +1281,8 @@ enum VideoTranscoder {
             droppedVideoFrames: callbackSnapshot.droppedFrames,
             videoEncodingPasses: passCount,
             copiedNonVideoSamples:
-                siloWriter.copiedNonVideoSamples + remainingNonVideo
+                siloWriter.copiedNonVideoSamples + remainingNonVideo,
+            writerSessionStartSeconds: CMTimeGetSeconds(writerSessionStartTime)
         )
     }
 
@@ -1203,6 +1298,7 @@ enum VideoTranscoder {
         progressEnd: Double,
         sourceDuration: Double,
         sessionStartTime: CMTime,
+        diagnosticsMonitor: RuntimeDiagnosticsMonitor,
         progress: @escaping @Sendable (Double) -> Void
     ) throws -> VideoPassResult {
         let reader: AVAssetReader
@@ -1283,9 +1379,13 @@ enum VideoTranscoder {
                     )
                 )
                 let fraction = min(1, completed / sourceDuration)
-                progress(
+                let currentProgress =
                     progressStart
                         + (progressEnd - progressStart) * fraction
+                progress(currentProgress)
+                diagnosticsMonitor.captureProgressIfNeeded(
+                    currentProgress,
+                    stage: "multipass-encoding"
                 )
             }
         }
@@ -1320,17 +1420,36 @@ enum VideoTranscoder {
         if let timeRange {
             return timeRange.start
         }
-        var earliestStart = CMTime.zero
+        var earliestStart: CMTime?
         for track in [videoTrack] + nonVideoTracks {
             let start = try await track.load(.timeRange).start
             if start.isNumeric,
-               (earliestStart == .zero
-                   || CMTimeCompare(start, earliestStart) < 0)
+               (
+                   earliestStart == nil
+                       || CMTimeCompare(start, earliestStart ?? start) < 0
+               )
             {
                 earliestStart = start
             }
         }
-        return earliestStart
+        return earliestStart ?? .zero
+    }
+
+    static func resolvedWriterSessionStartTime(
+        nominalStart: CMTime,
+        firstSampleTimes: [CMTime]
+    ) -> CMTime {
+        firstSampleTimes.reduce(nominalStart) { current, candidate in
+            guard candidate.isNumeric else {
+                return current
+            }
+            guard current.isNumeric else {
+                return candidate
+            }
+            return CMTimeCompare(candidate, current) < 0
+                ? candidate
+                : current
+        }
     }
 
     private static func drainRemainingPassthroughSamples(
@@ -1989,6 +2108,7 @@ private struct VideoPassResult {
 
 private struct RuntimeTranscodeResult {
     var propertyWrites: [PropertyWriteResult]
+    let runtimeDiagnostics: [TranscodeRuntimeDiagnosticsSnapshot]
     let hardwarePropertyQuery: APICallResult
     let usesHardwareEncoder: Bool
     let decodedVideoFrames: Int
@@ -1997,6 +2117,124 @@ private struct RuntimeTranscodeResult {
     let droppedVideoFrames: Int
     let videoEncodingPasses: Int
     let copiedNonVideoSamples: Int
+    let writerSessionStartSeconds: Double
+}
+
+private final class RuntimeDiagnosticsMonitor {
+    private let session: VTCompressionSession
+    private let keys: [String]
+    private let callback:
+        @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void
+    private var lastProgressBucket = 0
+    private(set) var snapshots: [TranscodeRuntimeDiagnosticsSnapshot] = []
+
+    init(
+        session: VTCompressionSession,
+        callback:
+            @escaping @Sendable (TranscodeRuntimeDiagnosticsSnapshot) -> Void
+    ) {
+        self.session = session
+        self.callback = callback
+
+        var supportedDictionary: CFDictionary?
+        let status = VTSessionCopySupportedPropertyDictionary(
+            session,
+            supportedPropertyDictionaryOut: &supportedDictionary
+        )
+        let supported: [String: NativeCompressionPropertyCapability]
+        if status == noErr, let supportedDictionary {
+            supported =
+                NativeCompressionCapabilityProbe.parseSupportedProperties(
+                    supportedDictionary as NSDictionary
+                )
+        } else {
+            supported = [:]
+        }
+        let diagnosticKeys = NativeCompressionPropertyCatalog.descriptors
+            .filter {
+                $0.category == .diagnostics
+                    || !$0.isPubliclySettable
+                    || supported[$0.key]?.isReadOnly == true
+            }
+            .map(\.key)
+        keys = Array(Set(diagnosticKeys)).sorted()
+    }
+
+    func captureProgressIfNeeded(
+        _ progress: Double,
+        stage: String
+    ) {
+        let bucket = Int((min(0.99, max(0, progress)) * 4).rounded(.down))
+        guard bucket > lastProgressBucket, bucket < 4 else {
+            return
+        }
+        lastProgressBucket = bucket
+        capture(
+            stage: stage,
+            progress: progress,
+            preferredKeys: [
+                "NumberOfPendingFrames",
+                "EstimatedAverageBytesPerFrame",
+                "UsingHardwareAcceleratedVideoEncoder",
+                "UsingGPURegistryID",
+            ]
+        )
+    }
+
+    func capture(
+        stage: String,
+        progress: Double,
+        preferredKeys: [String]? = nil
+    ) {
+        let selectedKeys: [String]
+        if let preferredKeys {
+            let available = Set(keys)
+            selectedKeys = preferredKeys.filter(available.contains)
+        } else {
+            selectedKeys = keys
+        }
+        let values = selectedKeys.map {
+            NativeCompressionCapabilityProbe.readProperty(
+                key: $0,
+                from: session
+            )
+        }
+        let snapshot = TranscodeRuntimeDiagnosticsSnapshot(
+            stage: stage,
+            stageTitle: Self.stageTitle(stage),
+            progress: progress,
+            values: values
+        )
+        snapshots.append(snapshot)
+        callback(snapshot)
+        let summary = values.map {
+            "\($0.key)=\($0.displayText)"
+        }.joined(separator: ";")
+        print("VT_TRANSCODE_DIAGNOSTICS=\(stage);\(summary)")
+    }
+
+    private static func stageTitle(_ stage: String) -> String {
+        switch stage {
+        case "encoder-prepared":
+            "编码器已准备"
+        case "single-pass-encoding":
+            "单遍编码中"
+        case "frames-completed":
+            "编码帧已完成"
+        case "multipass-prepared":
+            "多遍编码器已准备"
+        case "multipass-encoding":
+            "多遍编码中"
+        case "multipass-encoding-completed":
+            "多遍分析与重编码完成"
+        case "multipass-writing-final-stream":
+            "正在封装多遍最终码流"
+        case "writer-finished":
+            "输出容器写入完成"
+        default:
+            stage
+        }
+    }
 }
 
 private final class FrameSiloWriterContext: @unchecked Sendable {
@@ -2112,6 +2350,7 @@ private final class PassthroughChannel {
     let readerOutput: AVAssetReaderTrackOutput
     let writerInput: AVAssetWriterInput
     private var pendingSample: CMSampleBuffer?
+    private var writerSessionStartTime: CMTime?
     private(set) var reachedEnd = false
 
     init(
@@ -2120,6 +2359,24 @@ private final class PassthroughChannel {
     ) {
         self.readerOutput = readerOutput
         self.writerInput = writerInput
+    }
+
+    var pendingPresentationTime: CMTime? {
+        pendingSample.map(CMSampleBufferGetPresentationTimeStamp)
+    }
+
+    func prime() {
+        guard pendingSample == nil, !reachedEnd else {
+            return
+        }
+        pendingSample = readerOutput.copyNextSampleBuffer()
+        if pendingSample == nil {
+            reachedEnd = true
+        }
+    }
+
+    func setWriterSessionStartTime(_ value: CMTime) {
+        writerSessionStartTime = value
     }
 
     func appendOneIfReady(
@@ -2140,8 +2397,22 @@ private final class PassthroughChannel {
             return false
         }
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
+        guard presentationTime.isNumeric else {
+            throw TranscodeError.cannotPreserveTrack(
+                "\(writerInput.mediaType.rawValue)：样本时间戳无效"
+            )
+        }
+        if let writerSessionStartTime,
+           writerSessionStartTime.isNumeric,
+           CMTimeCompare(presentationTime, writerSessionStartTime) < 0
+        {
+            throw TranscodeError.cannotPreserveTrack(
+                "\(writerInput.mediaType.rawValue)：样本时间戳 "
+                    + "\(CMTimeGetSeconds(presentationTime)) 早于写入会话起点 "
+                    + "\(CMTimeGetSeconds(writerSessionStartTime))"
+            )
+        }
         if limit != .positiveInfinity,
-           presentationTime.isNumeric,
            CMTimeCompare(presentationTime, limit) > 0
         {
             return false

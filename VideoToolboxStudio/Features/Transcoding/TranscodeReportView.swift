@@ -75,6 +75,29 @@ struct TranscodeReportView: View {
                     "直通非视频样本",
                     value: "\(report.metrics.copiedNonVideoSamples)"
                 )
+                LabeledContent(
+                    "写入会话起点",
+                    value: String(
+                        format: "%.6f 秒",
+                        report.metrics.writerSessionStartSeconds
+                    )
+                )
+            }
+
+            if let diagnostics = report.runtimeDiagnostics.last {
+                Section("结束时只读状态与诊断") {
+                    LabeledContent("最终阶段", value: diagnostics.stageTitle)
+                    LabeledContent(
+                        "运行期采样",
+                        value: "\(report.runtimeDiagnostics.count) 次"
+                    )
+                    ForEach(diagnostics.values) { readback in
+                        LabeledContent(
+                            readback.key,
+                            value: readback.displayText
+                        )
+                    }
+                }
             }
 
             Section("保真核验") {

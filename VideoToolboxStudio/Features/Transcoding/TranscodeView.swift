@@ -192,6 +192,12 @@ struct TranscodeView: View {
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
 
+                            if let diagnostics = job.runtimeDiagnostics {
+                                runtimeDiagnosticsSummary(
+                                    diagnostics,
+                                    title: "结束时只读状态与诊断"
+                                )
+                            }
                             photoSaveControls(job)
                             sourceDeletionControls(job)
                         }
@@ -294,6 +300,10 @@ struct TranscodeView: View {
                     "\(result.report.metrics.encodedVideoFrames) 帧 · "
                         + "\(result.report.metrics.videoEncodingPasses) 遍 · "
                         + "\(result.report.metrics.copiedNonVideoSamples) 个非视频样本 · "
+                        + String(
+                            format: "写入起点 %.6f 秒 · ",
+                            result.report.metrics.writerSessionStartSeconds
+                        )
                         + formattedBytes(result.report.metrics.outputBytes)
                 )
                     .font(.caption.monospaced())
@@ -331,10 +341,18 @@ struct TranscodeView: View {
             Label("等待转换", systemImage: "clock")
                 .foregroundStyle(.secondary)
         case .running(let progress):
-            ProgressView(value: progress) {
-                Text("正在转换")
-            } currentValueLabel: {
-                Text("\(Int(progress * 100))%")
+            VStack(alignment: .leading, spacing: 8) {
+                ProgressView(value: progress) {
+                    Text("正在转换")
+                } currentValueLabel: {
+                    Text("\(Int(progress * 100))%")
+                }
+                if let diagnostics = job.runtimeDiagnostics {
+                    runtimeDiagnosticsSummary(
+                        diagnostics,
+                        title: "编码中只读状态与诊断"
+                    )
+                }
             }
         case .savingToPhotos:
             ProgressView("转换完成，正在存入相册")
@@ -349,6 +367,35 @@ struct TranscodeView: View {
                 .font(.footnote)
                 .foregroundStyle(.red)
         }
+    }
+
+    private func runtimeDiagnosticsSummary(
+        _ snapshot: TranscodeRuntimeDiagnosticsSnapshot,
+        title: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            LabeledContent("阶段", value: snapshot.stageTitle)
+            ForEach(
+                [
+                    "UsingHardwareAcceleratedVideoEncoder",
+                    "NumberOfPendingFrames",
+                    "EstimatedAverageBytesPerFrame",
+                    "UsingGPURegistryID",
+                ],
+                id: \.self
+            ) { key in
+                if let readback = snapshot.readback(for: key) {
+                    LabeledContent(key, value: readback.displayText)
+                }
+            }
+        }
+        .font(.caption.monospaced())
+        .padding(8)
+        .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("transcode-runtime-diagnostics")
     }
 
     private func formattedBytes(_ count: Int64) -> String {
