@@ -330,7 +330,8 @@ enum PhotoVideoInspector {
         networkAccessAllowed: Bool,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AVAsset {
-        try await withCheckedThrowingContinuation { continuation in
+        let box = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<PhotoVideoAssetBox, Error>) in
             let options = PHVideoRequestOptions()
             options.deliveryMode = .highQualityFormat
             options.version = .current
@@ -343,7 +344,9 @@ enum PhotoVideoInspector {
                 options: options
             ) { avAsset, _, info in
                 if let avAsset {
-                    continuation.resume(returning: avAsset)
+                    continuation.resume(
+                        returning: PhotoVideoAssetBox(avAsset)
+                    )
                     return
                 }
                 if let error = info?[PHImageErrorKey] as? Error {
@@ -357,6 +360,7 @@ enum PhotoVideoInspector {
                 )
             }
         }
+        return box.asset
     }
 
     nonisolated static func codecName(_ codecType: FourCharCode) -> String {
@@ -370,6 +374,14 @@ enum PhotoVideoInspector {
         default:
             mediaFourCC(codecType).uppercased()
         }
+    }
+}
+
+private final class PhotoVideoAssetBox: @unchecked Sendable {
+    let asset: AVAsset
+
+    init(_ asset: AVAsset) {
+        self.asset = asset
     }
 }
 
