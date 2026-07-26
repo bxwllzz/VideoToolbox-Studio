@@ -325,6 +325,7 @@ struct NativeCompressionSettingsView: View {
                     .font(.caption2)
             }
             .disabled(true)
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel(
                 "\(descriptor.key)，"
                     + "\(capability?.readback?.displayText ?? "未返回值")，"
