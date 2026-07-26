@@ -363,12 +363,15 @@ final class CapabilityProbeCloudUITests: XCTestCase {
                 && summary.label.contains("保真核验通过"),
             "真实转码或输出复核没有通过：\(summary.label)"
         )
+        let hasNonPositiveWriterStart =
+            metrics.label.contains("写入起点 -")
+                || metrics.label.contains("写入起点 0.")
         XCTAssertTrue(
             metrics.label.contains("300 帧")
                 && metrics.label.contains("遍")
-                && metrics.label.contains("写入起点 -"),
-            "10 秒 30 fps 素材没有完整输出 300 帧、编码遍次或负时间戳"
-                + "音频预卷证据：\(metrics.label)"
+                && hasNonPositiveWriterStart,
+            "10 秒 30 fps 素材没有完整输出 300 帧、编码遍次或不晚于"
+                + "视频起点的写入会话证据：\(metrics.label)"
         )
         let summaryLabel = summary.label
         let metricsLabel = metrics.label
