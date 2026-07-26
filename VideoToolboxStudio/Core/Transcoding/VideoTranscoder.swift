@@ -993,8 +993,11 @@ enum VideoTranscoder {
         guard sessionStatus == noErr, let compressionSession else {
             throw TranscodeError.compressionSessionFailed(sessionStatus)
         }
+        var compressionSessionIsInvalidated = false
         defer {
-            VTCompressionSessionInvalidate(compressionSession)
+            if !compressionSessionIsInvalidated {
+                VTCompressionSessionInvalidate(compressionSession)
+            }
         }
         let diagnosticsMonitor = RuntimeDiagnosticsMonitor(
             session: compressionSession,
@@ -1151,6 +1154,23 @@ enum VideoTranscoder {
             stage: "multipass-encoding-completed",
             progress: 0.89
         )
+        var hardwareValue: CFTypeRef?
+        let hardwareStatus = VTSessionCopyProperty(
+            compressionSession,
+            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+            allocator: nil,
+            valueOut: &hardwareValue
+        )
+        let usesHardware = (hardwareValue as? NSNumber)?.boolValue == true
+        guard hardwareStatus == noErr, usesHardware else {
+            throw TranscodeError.writerFailed("运行时没有确认严格硬件编码器。")
+        }
+
+        // 多遍输出此后只读取 Frame Silo，不再需要编码会话。先执行公开的
+        // 有序 teardown，并让 compressionSession 与 callbackContext 在
+        // MOV 写入期间继续存活，避免服务断开回调与 AVAssetReader 析构重叠。
+        VTCompressionSessionInvalidate(compressionSession)
+        compressionSessionIsInvalidated = true
 
         if let passthroughReader,
            !passthroughReader.startReading()
@@ -1238,22 +1258,11 @@ enum VideoTranscoder {
                 writer.error?.localizedDescription ?? "finishWriting 未完成"
             )
         }
-        diagnosticsMonitor.capture(
+        diagnosticsMonitor.captureCached(
             stage: "writer-finished",
             progress: 0.985
         )
 
-        var hardwareValue: CFTypeRef?
-        let hardwareStatus = VTSessionCopyProperty(
-            compressionSession,
-            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-            allocator: nil,
-            valueOut: &hardwareValue
-        )
-        let usesHardware = (hardwareValue as? NSNumber)?.boolValue == true
-        guard hardwareStatus == noErr, usesHardware else {
-            throw TranscodeError.writerFailed("运行时没有确认严格硬件编码器。")
-        }
         let callbackSnapshot = callbackContext.snapshot()
         guard firstPass.submittedFrames > 0,
               siloWriter.encodedFrames > 0
@@ -2224,6 +2233,30 @@ private final class RuntimeDiagnosticsMonitor {
             "\($0.key)=\($0.displayText)"
         }.joined(separator: ";")
         print("VT_TRANSCODE_DIAGNOSTICS=\(stage);\(summary)")
+    }
+
+    func captureCached(
+        stage: String,
+        progress: Double
+    ) {
+        let values = snapshots.last?.values ?? []
+        let snapshot = TranscodeRuntimeDiagnosticsSnapshot(
+            stage: stage,
+            stageTitle:
+                Self.stageTitle(stage)
+                + "（编码会话关闭前最终回读）",
+            progress: progress,
+            values: values
+        )
+        snapshots.append(snapshot)
+        callback(snapshot)
+        let summary = values.map {
+            "\($0.key)=\($0.displayText)"
+        }.joined(separator: ";")
+        print(
+            "VT_TRANSCODE_DIAGNOSTICS="
+                + "\(stage);source=session-final-readback;\(summary)"
+        )
     }
 
     private static func stageTitle(_ stage: String) -> String {
