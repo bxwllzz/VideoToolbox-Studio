@@ -29,8 +29,8 @@ GitHub Actions 使用 OIDC（OpenID Connect，开放式身份连接）换取短�
 
 ## 触发规则
 
-- 同仓库 PR（Pull Request，拉取请求）：通过 OIDC 获取临时凭据并执行完整真机回归；IAM 信任策略必须明确允许当前仓库的 `:pull_request` 主体；
-- fork PR：整个 AWS Job 跳过，不申请 OIDC 令牌，也不访问 AWS；
+- 仓库所有者 `bxwllzz` 从同仓库分支发起的 PR（Pull Request，拉取请求）：通过 OIDC 获取临时凭据并执行完整真机回归；IAM 信任策略必须明确允许当前仓库的 `:pull_request` 主体；
+- 其他作者或 fork 发起的 PR：整个 AWS Job 跳过，不申请 OIDC 令牌，也不访问 AWS；
 - 推送到 `main`：通过 OIDC 获取临时凭据，并自动执行完整 Device Farm 真机回归；
 - Actions 页面手动触发：在所选分支执行完整回归。
 
@@ -52,4 +52,4 @@ Device Farm 报告中的临时下载 URL 不进入 GitHub Artifact。
 
 ## 当前接入状态
 
-Xcode 26.6 真机 App 与 XCUITest Runner 构建、打包已经通过；`main` 已成功通过 OIDC 获取临时凭据、验证项目权限并进入 Device Farm。工作流会额外保存只包含 `aud`、`sub`、仓库、分支、工作流和作业名的 `oidc-claims.json`，不保存 JWT 或任何临时凭据。同仓库 PR 的最终接入以 `:pull_request` 信任主体和 fork 拒绝条件共同约束。
+Xcode 26.6 真机 App 与 XCUITest Runner 构建、打包已经通过；`main` 已成功通过 OIDC 获取临时凭据、验证项目权限并进入 Device Farm。工作流会额外保存只包含 `aud`、`sub`、仓库、分支、工作流和作业名的 `oidc-claims.json`，不保存 JWT 或任何临时凭据。PR 的最终接入以 `:pull_request` 信任主体、同仓库来源和所有者身份三项条件共同约束。
