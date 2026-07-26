@@ -259,29 +259,24 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         XCTAssertTrue(nextButton.waitForExistence(timeout: 10))
         nextButton.tap()
 
-        let runButton = app.buttons["transcode-start"]
-        makeHittable(runButton, in: app)
-        XCTAssertTrue(
-            runButton.waitForExistence(timeout: 60),
-            "从系统照片库取得 AVAsset 后没有进入压缩设置页。"
-        )
-
         let capabilityStatus = app.descendants(
             matching: .any
         )["native-capability-status"]
-        makeHittableFromBelow(capabilityStatus, in: app)
         XCTAssertTrue(
             capabilityStatus.waitForExistence(timeout: 60),
             "压缩设置页没有完成本机编码器支持字典检测。"
         )
+        let nativeCapabilityLabel = capabilityStatus.label
+
         let averageBitRateProperty = app.descendants(
             matching: .any
         )["native-property-AverageBitRate"]
-        makeHittableFromBelow(averageBitRateProperty, in: app)
+        makeHittable(averageBitRateProperty, in: app)
         XCTAssertTrue(
             averageBitRateProperty.waitForExistence(timeout: 30),
             "默认互斥码率字段没有显示 AverageBitRate。"
         )
+        let nativeAverageBitRateLabel = averageBitRateProperty.label
         XCTAssertFalse(
             app.descendants(
                 matching: .any
@@ -300,11 +295,14 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             readOnlyProperty.isEnabled,
             "本机不可写的 MaxFrameDelayCount 没有置灰。"
         )
-        let nativeCapabilityLabel = capabilityStatus.label
-        let nativeAverageBitRateLabel = averageBitRateProperty.label
         let nativeReadOnlyPropertyLabel = readOnlyProperty.label
 
+        let runButton = app.buttons["transcode-start"]
         makeHittable(runButton, in: app)
+        XCTAssertTrue(
+            runButton.waitForExistence(timeout: 60),
+            "从系统照片库取得 AVAsset 后没有进入压缩设置页。"
+        )
         runButton.tap()
 
         let summary = app.staticTexts["cloud-transcode-summary"]
