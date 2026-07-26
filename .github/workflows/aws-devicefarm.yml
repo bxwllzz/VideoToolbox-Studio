@@ -43,6 +43,9 @@ env:
 jobs:
   cloud-device-test:
     name: 构建并执行 iOS 真机编码回归
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-26
     timeout-minutes: 60
 
@@ -119,7 +122,6 @@ jobs:
           retention-days: 14
 
       - name: 记录 OIDC 信任声明
-        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           response="$(
@@ -168,7 +170,6 @@ jobs:
             build/aws-devicefarm/logs/oidc-claims.json
 
       - name: 通过 OIDC 获取 AWS 临时凭据
-        if: github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           aws-region: ${{ env.AWS_REGION }}
@@ -178,7 +179,6 @@ jobs:
           unset-current-credentials: true
 
       - name: 验证 AWS 身份与项目权限
-        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           aws sts get-caller-identity >/dev/null
@@ -189,7 +189,6 @@ jobs:
           echo "OIDC 临时身份与 Device Farm 项目读取权限均已验证。"
 
       - name: 运行 AWS Device Farm 真机测试
-        if: github.event_name != 'pull_request'
         run: |
           bash scripts/run-aws-devicefarm-xcuitest.sh \
             build/aws-devicefarm/package/VideoToolboxStudio.ipa \
@@ -197,7 +196,7 @@ jobs:
             build/aws-devicefarm/results
 
       - name: 上传 AWS 真机证据
-        if: ${{ always() && github.event_name != 'pull_request' }}
+        if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: aws-devicefarm-${{ github.run_number }}-${{ github.sha }}
@@ -209,7 +208,7 @@ jobs:
 
 
       - name: 发布 AWS 真机提交状态
-        if: ${{ always() && github.event_name != 'pull_request' }}
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_STATUS: ${{ job.status }}

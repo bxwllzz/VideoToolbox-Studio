@@ -432,15 +432,21 @@ enum VideoTranscoder {
                 }
                 submittedVideoFrames += 1
 
-                for channel in passthroughChannels {
-                    copiedNonVideoSamples += try channel.drain(
-                        through: CMTimeAdd(presentationTime, duration),
-                        cancellationToken: cancellationToken,
-                        writer: writer
-                    )
-                }
-                try callbackContext.drainAvailableSamples(
-                    into: videoWriterInput,
+                let drainLimit = CMTimeAdd(presentationTime, duration)
+                let drainResult = try drainReadySamples(
+                    callbackContext: callbackContext,
+                    videoWriterInput: videoWriterInput,
+                    passthroughChannels: passthroughChannels,
+                    through: drainLimit,
+                    writer: writer,
+                    cancellationToken: cancellationToken
+                )
+                copiedNonVideoSamples += drainResult.copiedNonVideoSamples
+                copiedNonVideoSamples += try drainUntilVideoQueueHasCapacity(
+                    callbackContext: callbackContext,
+                    videoWriterInput: videoWriterInput,
+                    passthroughChannels: passthroughChannels,
+                    through: drainLimit,
                     writer: writer,
                     cancellationToken: cancellationToken
                 )
@@ -472,19 +478,16 @@ enum VideoTranscoder {
             throw TranscodeError.frameEncodingFailed(completeStatus)
         }
         try callbackContext.throwIfFailed()
-        try callbackContext.drainAvailableSamples(
-            into: videoWriterInput,
+        copiedNonVideoSamples += try drainAllRemainingSamples(
+            callbackContext: callbackContext,
+            videoWriterInput: videoWriterInput,
+            passthroughChannels: passthroughChannels,
             writer: writer,
             cancellationToken: cancellationToken
         )
         videoWriterInput.markAsFinished()
 
         for channel in passthroughChannels {
-            copiedNonVideoSamples += try channel.drain(
-                through: .positiveInfinity,
-                cancellationToken: cancellationToken,
-                writer: writer
-            )
             channel.writerInput.markAsFinished()
         }
 
@@ -540,6 +543,144 @@ enum VideoTranscoder {
             droppedVideoFrames: callbackSnapshot.droppedFrames,
             copiedNonVideoSamples: copiedNonVideoSamples
         )
+    }
+
+    private struct PipelineDrainResult {
+        let copiedNonVideoSamples: Int
+        let madeProgress: Bool
+    }
+
+    private static func drainReadySamples(
+        callbackContext: TranscodeCallbackContext,
+        videoWriterInput: AVAssetWriterInput,
+        passthroughChannels: [PassthroughChannel],
+        through limit: CMTime,
+        writer: AVAssetWriter,
+        cancellationToken: EncodingCancellationToken
+    ) throws -> PipelineDrainResult {
+        var copiedNonVideoSamples = 0
+        var madeProgress = false
+
+        while true {
+            try checkCancellation(cancellationToken)
+            try callbackContext.throwIfFailed()
+            try checkWriterState(writer)
+
+            var roundMadeProgress = false
+            if try callbackContext.appendOneIfReady(
+                into: videoWriterInput,
+                writer: writer
+            ) {
+                roundMadeProgress = true
+            }
+            for channel in passthroughChannels {
+                if try channel.appendOneIfReady(
+                    through: limit,
+                    writer: writer
+                ) {
+                    copiedNonVideoSamples += 1
+                    roundMadeProgress = true
+                }
+            }
+
+            guard roundMadeProgress else {
+                break
+            }
+            madeProgress = true
+        }
+
+        return PipelineDrainResult(
+            copiedNonVideoSamples: copiedNonVideoSamples,
+            madeProgress: madeProgress
+        )
+    }
+
+    private static func drainUntilVideoQueueHasCapacity(
+        callbackContext: TranscodeCallbackContext,
+        videoWriterInput: AVAssetWriterInput,
+        passthroughChannels: [PassthroughChannel],
+        through limit: CMTime,
+        writer: AVAssetWriter,
+        cancellationToken: EncodingCancellationToken
+    ) throws -> Int {
+        let maximumPendingVideoSamples = 24
+        var copiedNonVideoSamples = 0
+        var lastProgressAt = ProcessInfo.processInfo.systemUptime
+
+        while callbackContext.pendingSampleCount > maximumPendingVideoSamples {
+            let result = try drainReadySamples(
+                callbackContext: callbackContext,
+                videoWriterInput: videoWriterInput,
+                passthroughChannels: passthroughChannels,
+                through: limit,
+                writer: writer,
+                cancellationToken: cancellationToken
+            )
+            copiedNonVideoSamples += result.copiedNonVideoSamples
+            if result.madeProgress {
+                lastProgressAt = ProcessInfo.processInfo.systemUptime
+                continue
+            }
+            try checkCancellation(cancellationToken)
+            try callbackContext.throwIfFailed()
+            try checkWriterState(writer)
+            try checkPipelineStall(since: lastProgressAt)
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+
+        return copiedNonVideoSamples
+    }
+
+    private static func drainAllRemainingSamples(
+        callbackContext: TranscodeCallbackContext,
+        videoWriterInput: AVAssetWriterInput,
+        passthroughChannels: [PassthroughChannel],
+        writer: AVAssetWriter,
+        cancellationToken: EncodingCancellationToken
+    ) throws -> Int {
+        var copiedNonVideoSamples = 0
+        var lastProgressAt = ProcessInfo.processInfo.systemUptime
+
+        while callbackContext.pendingSampleCount > 0
+            || passthroughChannels.contains(where: { !$0.reachedEnd })
+        {
+            let result = try drainReadySamples(
+                callbackContext: callbackContext,
+                videoWriterInput: videoWriterInput,
+                passthroughChannels: passthroughChannels,
+                through: .positiveInfinity,
+                writer: writer,
+                cancellationToken: cancellationToken
+            )
+            copiedNonVideoSamples += result.copiedNonVideoSamples
+            if result.madeProgress {
+                lastProgressAt = ProcessInfo.processInfo.systemUptime
+                continue
+            }
+            try checkCancellation(cancellationToken)
+            try callbackContext.throwIfFailed()
+            try checkWriterState(writer)
+            try checkPipelineStall(since: lastProgressAt)
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+
+        return copiedNonVideoSamples
+    }
+
+    private static func checkWriterState(_ writer: AVAssetWriter) throws {
+        if writer.status == .failed || writer.status == .cancelled {
+            throw TranscodeError.writerFailed(
+                writer.error?.localizedDescription ?? "AVAssetWriter 已停止"
+            )
+        }
+    }
+
+    private static func checkPipelineStall(since lastProgressAt: TimeInterval) throws {
+        if ProcessInfo.processInfo.systemUptime - lastProgressAt > 30 {
+            throw TranscodeError.writerFailed(
+                "所有轨道连续 30 秒无法写入，任务已停止以避免永久挂起。"
+            )
+        }
     }
 
     private static func configure(
@@ -1029,7 +1170,7 @@ private final class PassthroughChannel {
     let readerOutput: AVAssetReaderTrackOutput
     let writerInput: AVAssetWriterInput
     private var pendingSample: CMSampleBuffer?
-    private var reachedEnd = false
+    private(set) var reachedEnd = false
 
     init(
         readerOutput: AVAssetReaderTrackOutput,
@@ -1039,45 +1180,46 @@ private final class PassthroughChannel {
         self.writerInput = writerInput
     }
 
-    func drain(
+    func appendOneIfReady(
         through limit: CMTime,
-        cancellationToken: EncodingCancellationToken,
         writer: AVAssetWriter
-    ) throws -> Int {
-        var copied = 0
-        while !reachedEnd {
+    ) throws -> Bool {
+        guard !reachedEnd else {
+            return false
+        }
+        if pendingSample == nil {
+            pendingSample = readerOutput.copyNextSampleBuffer()
             if pendingSample == nil {
-                pendingSample = readerOutput.copyNextSampleBuffer()
-                if pendingSample == nil {
-                    reachedEnd = true
-                    break
-                }
+                reachedEnd = true
+                return false
             }
-            guard let sample = pendingSample else {
-                break
-            }
-            let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
-            if limit != .positiveInfinity,
-               presentationTime.isNumeric,
-               CMTimeCompare(presentationTime, limit) > 0
-            {
-                break
-            }
-            try waitUntilReady(
-                writerInput,
-                cancellationToken: cancellationToken,
-                writer: writer
-            )
-            guard writerInput.append(sample) else {
+        }
+        guard let sample = pendingSample else {
+            return false
+        }
+        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
+        if limit != .positiveInfinity,
+           presentationTime.isNumeric,
+           CMTimeCompare(presentationTime, limit) > 0
+        {
+            return false
+        }
+        guard writerInput.isReadyForMoreMediaData else {
+            if writer.status == .failed || writer.status == .cancelled {
                 throw TranscodeError.writerFailed(
-                    writer.error?.localizedDescription
-                        ?? "非视频轨道 append 返回 false"
+                    writer.error?.localizedDescription ?? "AVAssetWriter 已停止"
                 )
             }
-            copied += 1
-            pendingSample = nil
+            return false
         }
-        return copied
+        guard writerInput.append(sample) else {
+            throw TranscodeError.writerFailed(
+                writer.error?.localizedDescription
+                    ?? "非视频轨道 append 返回 false"
+            )
+        }
+        pendingSample = nil
+        return true
     }
 }
 
@@ -1089,9 +1231,16 @@ private struct TranscodeCallbackSnapshot {
 private final class TranscodeCallbackContext: @unchecked Sendable {
     private let lock = NSLock()
     private var pendingSamples: [CMSampleBuffer] = []
+    private var nextPendingSampleIndex = 0
     private var encodedFrames = 0
     private var droppedFrames = 0
     private var failure: TranscodeError?
+
+    var pendingSampleCount: Int {
+        lock.withLock {
+            pendingSamples.count - nextPendingSampleIndex
+        }
+    }
 
     func receive(
         status: OSStatus,
@@ -1121,34 +1270,46 @@ private final class TranscodeCallbackContext: @unchecked Sendable {
         }
     }
 
-    func drainAvailableSamples(
+    func appendOneIfReady(
         into writerInput: AVAssetWriterInput,
-        writer: AVAssetWriter,
-        cancellationToken: EncodingCancellationToken
-    ) throws {
-        while true {
-            try throwIfFailed()
-            let sample = lock.withLock {
-                pendingSamples.isEmpty ? nil : pendingSamples.removeFirst()
-            }
-            guard let sample else {
-                return
-            }
-            try waitUntilReady(
-                writerInput,
-                cancellationToken: cancellationToken,
-                writer: writer
-            )
-            guard writerInput.append(sample) else {
+        writer: AVAssetWriter
+    ) throws -> Bool {
+        try throwIfFailed()
+        guard writerInput.isReadyForMoreMediaData else {
+            if writer.status == .failed || writer.status == .cancelled {
                 throw TranscodeError.writerFailed(
-                    writer.error?.localizedDescription
-                        ?? "视频轨道 append 返回 false"
+                    writer.error?.localizedDescription ?? "AVAssetWriter 已停止"
                 )
             }
-            lock.withLock {
-                encodedFrames += 1
-            }
+            return false
         }
+            let sample: CMSampleBuffer? = lock.withLock {
+            guard nextPendingSampleIndex < pendingSamples.count else {
+                return nil
+            }
+            let sample = pendingSamples[nextPendingSampleIndex]
+            nextPendingSampleIndex += 1
+            if nextPendingSampleIndex >= 64,
+               nextPendingSampleIndex * 2 >= pendingSamples.count
+            {
+                pendingSamples.removeFirst(nextPendingSampleIndex)
+                nextPendingSampleIndex = 0
+            }
+            return sample
+        }
+        guard let sample else {
+            return false
+        }
+        guard writerInput.append(sample) else {
+            throw TranscodeError.writerFailed(
+                writer.error?.localizedDescription
+                    ?? "视频轨道 append 返回 false"
+            )
+        }
+        lock.withLock {
+            encodedFrames += 1
+        }
+        return true
     }
 
     func throwIfFailed() throws {
@@ -1164,30 +1325,6 @@ private final class TranscodeCallbackContext: @unchecked Sendable {
                 droppedFrames: droppedFrames
             )
         }
-    }
-}
-
-private func waitUntilReady(
-    _ input: AVAssetWriterInput,
-    cancellationToken: EncodingCancellationToken,
-    writer: AVAssetWriter
-) throws {
-    let startedAt = ProcessInfo.processInfo.systemUptime
-    while !input.isReadyForMoreMediaData {
-        if cancellationToken.isCancelled {
-            throw TranscodeError.cancelled
-        }
-        if writer.status == .failed || writer.status == .cancelled {
-            throw TranscodeError.writerFailed(
-                writer.error?.localizedDescription ?? "AVAssetWriter 已停止"
-            )
-        }
-        if ProcessInfo.processInfo.systemUptime - startedAt > 30 {
-            throw TranscodeError.writerFailed(
-                "等待轨道写入背压超过 30 秒，任务已停止以避免永久挂起。"
-            )
-        }
-        Thread.sleep(forTimeInterval: 0.002)
     }
 }
 

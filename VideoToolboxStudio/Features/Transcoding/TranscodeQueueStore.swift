@@ -126,15 +126,28 @@ final class TranscodeQueueStore: ObservableObject {
                 setState(.running(0), for: jobID)
 
                 do {
-                    let result = try await VideoTranscoder.transcode(
-                        sourceURL: sourceURL,
-                        settings: requestedSettings,
-                        buildReport: buildReport,
-                        cancellationToken: token
-                    ) { [weak self] value in
-                        Task { @MainActor in
-                            self?.setProgress(value, for: jobID)
+                    let worker = Task.detached(priority: .userInitiated) {
+                        try await VideoTranscoder.transcode(
+                            sourceURL: sourceURL,
+                            settings: requestedSettings,
+                            buildReport: buildReport,
+                            cancellationToken: token
+                        ) { [weak self] value in
+                            Task { @MainActor in
+                                self?.setProgress(value, for: jobID)
+                            }
                         }
+                    }
+                    let result = try await withTaskCancellationHandler {
+                        try await worker.value
+                    } onCancel: {
+                        token.cancel()
+                        worker.cancel()
+                    }
+                    guard !Task.isCancelled else {
+                        token.cancel()
+                        setState(.cancelled, for: jobID)
+                        break
                     }
                     setResult(result, for: jobID)
                 } catch is CancellationError {
