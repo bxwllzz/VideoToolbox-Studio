@@ -95,6 +95,39 @@ final class TranscodeSettingsTests: XCTestCase {
         XCTAssertEqual(resolved.maxKeyFrameIntervalDuration, 2)
     }
 
+    func test精细编码请求前向分析并保持目标码率() {
+        let source = makeVideoSummary(
+            bitRate: 10_000_000,
+            frameRate: 30,
+            isHDR: false
+        )
+        var settings = TranscodeSettings.balanced
+        settings.encodingQuality = .refined
+
+        let resolved = VideoTranscoder.resolve(
+            settings: settings,
+            sourceVideo: source,
+            codecType: kCMVideoCodecType_HEVC,
+            isHDR: false
+        )
+
+        XCTAssertEqual(resolved.encodingQuality, .refined)
+        XCTAssertEqual(resolved.averageBitRate, 6_000_000)
+        XCTAssertEqual(resolved.suggestedLookAheadFrameCount, 60)
+    }
+
+    func test精细编码拒绝实时或速度优先() {
+        var realTimeSettings = TranscodeSettings.balanced
+        realTimeSettings.encodingQuality = .refined
+        realTimeSettings.realTime = true
+        XCTAssertThrowsError(try realTimeSettings.validate())
+
+        var speedSettings = TranscodeSettings.balanced
+        speedSettings.encodingQuality = .refined
+        speedSettings.prioritizeEncodingSpeedOverQuality = true
+        XCTAssertThrowsError(try speedSettings.validate())
+    }
+
     func testHDR输入拒绝H264() {
         XCTAssertThrowsError(
             try TranscodeTargetCodec.h264.resolvedCodecType(isHDR: true)

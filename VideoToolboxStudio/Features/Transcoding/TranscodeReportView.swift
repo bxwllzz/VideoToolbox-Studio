@@ -37,6 +37,14 @@ struct TranscodeReportView: View {
                     "码率控制",
                     value: report.requestedSettings.rateControl.title
                 )
+                LabeledContent(
+                    "编码质量",
+                    value: report.requestedSettings.encodingQuality.title
+                )
+                LabeledContent(
+                    "实际编码遍数",
+                    value: "\(report.metrics.videoEncodingPasses)"
+                )
                 if let averageBitRate = report.resolvedSettings.averageBitRate {
                     LabeledContent(
                         "目标平均码率",
@@ -91,6 +99,14 @@ struct TranscodeReportView: View {
                         ? "开启"
                         : "关闭"
                 )
+                if let lookAhead =
+                    report.resolvedSettings.suggestedLookAheadFrameCount
+                {
+                    LabeledContent(
+                        "请求前向分析",
+                        value: "\(lookAhead) 帧"
+                    )
+                }
             }
 
             Section("性能") {

@@ -53,8 +53,27 @@ struct TranscodeQueueJob: Identifiable {
 
 @MainActor
 final class TranscodeQueueStore: ObservableObject {
-    @Published var selectedPreset: TranscodePreset = .balanced
-    @Published var settings = TranscodePreset.balanced.settings
+    @Published var selectedPreset: TranscodePreset {
+        didSet {
+            persistEncodingPreferencesIfNeeded()
+        }
+    }
+    @Published var settings: TranscodeSettings {
+        didSet {
+            persistEncodingPreferencesIfNeeded()
+        }
+    }
+    @Published var rememberLastSettings: Bool {
+        didSet {
+            defaults.set(rememberLastSettings, forKey: PreferenceKey.rememberSettings)
+            if rememberLastSettings {
+                persistEncodingPreferencesIfNeeded()
+            } else {
+                defaults.removeObject(forKey: PreferenceKey.settings)
+                defaults.removeObject(forKey: PreferenceKey.preset)
+            }
+        }
+    }
     @Published var automaticallySaveToPhotoLibrary = true
     @Published private(set) var jobs: [TranscodeQueueJob] = []
     @Published private(set) var isRunning = false
@@ -64,8 +83,32 @@ final class TranscodeQueueStore: ObservableObject {
     private var cancellationToken: EncodingCancellationToken?
     private var estimateTask: Task<Void, Never>?
     private var estimateCancellationToken: EncodingCancellationToken?
+    private let defaults: UserDefaults
 
-    init(initialSources: [TranscodeSource] = []) {
+    init(
+        initialSources: [TranscodeSource] = [],
+        defaults: UserDefaults = .standard
+    ) {
+        self.defaults = defaults
+        rememberLastSettings =
+            defaults.object(forKey: PreferenceKey.rememberSettings) as? Bool
+                ?? true
+        if rememberLastSettings,
+           let data = defaults.data(forKey: PreferenceKey.settings),
+           let savedSettings = try? JSONDecoder().decode(
+               TranscodeSettings.self,
+               from: data
+           )
+        {
+            settings = savedSettings
+            selectedPreset = defaults
+                .string(forKey: PreferenceKey.preset)
+                .flatMap(TranscodePreset.init(rawValue:))
+                ?? .custom
+        } else {
+            settings = TranscodePreset.balanced.settings
+            selectedPreset = .balanced
+        }
         jobs = initialSources.map(TranscodeQueueJob.init(source:))
     }
 
@@ -111,6 +154,12 @@ final class TranscodeQueueStore: ObservableObject {
         if selectedPreset != .custom {
             selectedPreset = .custom
         }
+    }
+
+    func restoreDefaultSettings() {
+        cancelEstimate()
+        settings = TranscodePreset.balanced.settings
+        selectedPreset = .balanced
     }
 
     func add(_ urls: [URL], replaceQueue: Bool) {
@@ -404,5 +453,22 @@ final class TranscodeQueueStore: ObservableObject {
             return
         }
         jobs[index].sourceDeletionState = state
+    }
+
+    private func persistEncodingPreferencesIfNeeded() {
+        guard rememberLastSettings,
+              let data = try? JSONEncoder().encode(settings)
+        else {
+            return
+        }
+        defaults.set(data, forKey: PreferenceKey.settings)
+        defaults.set(selectedPreset.rawValue, forKey: PreferenceKey.preset)
+    }
+
+    private enum PreferenceKey {
+        static let rememberSettings =
+            "transcode.preferences.remember-settings"
+        static let settings = "transcode.preferences.settings.v1"
+        static let preset = "transcode.preferences.preset.v1"
     }
 }

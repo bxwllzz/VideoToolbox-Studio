@@ -104,8 +104,25 @@ enum TranscodeRateControl: String, Codable, CaseIterable, Identifiable, Sendable
     }
 }
 
+enum TranscodeEncodingQuality: String, Codable, CaseIterable, Identifiable, Sendable {
+    case standard
+    case refined
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard:
+            "标准"
+        case .refined:
+            "精细（更慢）"
+        }
+    }
+}
+
 struct TranscodeSettings: Codable, Equatable, Sendable {
     var targetCodec: TranscodeTargetCodec
+    var encodingQuality: TranscodeEncodingQuality
     var rateControl: TranscodeRateControl
     var sourceBitRateRatio: Double
     var fixedBitRate: Int
@@ -119,6 +136,7 @@ struct TranscodeSettings: Codable, Equatable, Sendable {
 
     static let balanced = TranscodeSettings(
         targetCodec: .automatic,
+        encodingQuality: .standard,
         rateControl: .sourceRatio,
         sourceBitRateRatio: 0.60,
         fixedBitRate: 8_000_000,
@@ -132,6 +150,13 @@ struct TranscodeSettings: Codable, Equatable, Sendable {
     )
 
     func validate() throws {
+        if encodingQuality == .refined,
+           (realTime || prioritizeEncodingSpeedOverQuality)
+        {
+            throw TranscodeError.invalidSettings(
+                "精细编码不能同时启用实时编码或速度优先。"
+            )
+        }
         guard (0.10...1.50).contains(sourceBitRateRatio) else {
             throw TranscodeError.invalidSettings("源码率比例必须在 10%～150% 之间。")
         }
@@ -198,6 +223,7 @@ enum TranscodePreset: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .fidelity:
             var value = TranscodeSettings.balanced
+            value.encodingQuality = .refined
             value.sourceBitRateRatio = 0.80
             value.quality = 0.88
             return value
@@ -304,11 +330,13 @@ struct PreservationCheck: Codable, Equatable, Sendable {
 struct ResolvedTranscodeSettings: Codable, Equatable, Sendable {
     let codecType: UInt32
     let codecFourCC: String
+    let encodingQuality: TranscodeEncodingQuality
     let profileLevel: String
     let pixelFormat: UInt32
     let averageBitRate: Int?
     let quality: Double?
     let dataRateLimits: [Double]?
+    let suggestedLookAheadFrameCount: Int?
     let expectedFrameRate: Double
     let maxKeyFrameInterval: Int
     let maxKeyFrameIntervalDuration: Double

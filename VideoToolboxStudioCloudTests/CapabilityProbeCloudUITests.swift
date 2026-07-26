@@ -289,17 +289,25 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         let metrics = app.staticTexts["cloud-transcode-metrics"]
         makeHittable(metrics, in: app)
         XCTAssertTrue(metrics.waitForExistence(timeout: 30))
+        let multiPass = app.staticTexts["cloud-transcode-multipass"]
+        makeHittable(multiPass, in: app)
+        XCTAssertTrue(
+            multiPass.waitForExistence(timeout: 30),
+            "没有回收到多遍编码实际执行或回退证据。"
+        )
         XCTAssertTrue(
             summary.label.contains("1/1")
                 && summary.label.contains("保真核验通过"),
             "真实转码或输出复核没有通过：\(summary.label)"
         )
         XCTAssertTrue(
-            metrics.label.contains("300 帧"),
-            "10 秒 30 fps 素材没有完整输出 300 帧：\(metrics.label)"
+            metrics.label.contains("300 帧")
+                && metrics.label.contains("遍"),
+            "10 秒 30 fps 素材没有完整输出 300 帧或编码遍次证据：\(metrics.label)"
         )
         let summaryLabel = summary.label
         let metricsLabel = metrics.label
+        let multiPassLabel = multiPass.label
         let photoSaveSuccess = app.staticTexts["photo-save-success"]
         makeHittable(photoSaveSuccess, in: app)
         XCTAssertTrue(
@@ -323,6 +331,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "source_metadata": sourceLabel,
             "summary": summaryLabel,
             "metrics": metricsLabel,
+            "multi_pass": multiPassLabel,
             "runner_device_model": UIDevice.current.model,
             "runner_system_name": UIDevice.current.systemName,
             "runner_system_version": UIDevice.current.systemVersion,
