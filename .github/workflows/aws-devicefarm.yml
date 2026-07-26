@@ -39,6 +39,7 @@ env:
   AWS_DEVICE_FARM_PROJECT_ARN: arn:aws:devicefarm:us-west-2:247332612374:project:36ab8700-d09f-42fa-ad15-65df8d06958b
   AWS_DEVICE_FARM_ROLE_ARN: arn:aws:iam::247332612374:role/bxwllzz@github
   AWS_DEVICE_FARM_MIN_IOS_MAJOR: "26"
+  AWS_DEVICE_FARM_TEST_FILTER: ${{ github.event_name == 'pull_request' && 'CapabilityProbeCloudUITests/testCloudTranscodePreservesMediaContract' || '' }}
 
 jobs:
   cloud-device-test:

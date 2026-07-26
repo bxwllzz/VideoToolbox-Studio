@@ -14,6 +14,7 @@ enum VideoTranscoder {
     ) async throws -> TranscodeResult {
         try settings.validate()
         try checkCancellation(cancellationToken)
+        reportStage("inspect-input", progress: 0.001, callback: progress)
 
         let hasSecurityScope = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -25,6 +26,7 @@ enum VideoTranscoder {
         let thermalStateBefore = thermalDescription(ProcessInfo.processInfo.thermalState)
         let startedAt = ProcessInfo.processInfo.systemUptime
         let inputSummary = try await MediaInspector.inspect(sourceURL)
+        reportStage("input-inspected", progress: 0.005, callback: progress)
         guard inputSummary.videoTracks.count == 1 else {
             if inputSummary.videoTracks.isEmpty {
                 throw TranscodeError.unsupportedInput("没有找到视频轨道。")
@@ -61,6 +63,7 @@ enum VideoTranscoder {
         try? FileManager.default.removeItem(at: outputURL)
 
         do {
+            reportStage("prepare-pipeline", progress: 0.01, callback: progress)
             let runtimeResult = try await encode(
                 asset: asset,
                 videoTrack: videoTrack,
@@ -73,6 +76,7 @@ enum VideoTranscoder {
                 progress: progress
             )
 
+            reportStage("inspect-output", progress: 0.99, callback: progress)
             try copyFileDates(from: sourceURL, to: outputURL)
             let outputSummary = try await MediaInspector.inspect(outputURL)
             let checks = preservationChecks(
@@ -149,6 +153,7 @@ enum VideoTranscoder {
                 report: report
             )
         } catch {
+            print("VT_TRANSCODE_ERROR=\(error.localizedDescription)")
             try? FileManager.default.removeItem(at: outputURL)
             throw error
         }
@@ -334,6 +339,7 @@ enum VideoTranscoder {
                 reader.error?.localizedDescription ?? "startReading 返回 false"
             )
         }
+        reportStage("reader-writer-started", progress: 0.02, callback: progress)
 
         let callbackContext = TranscodeCallbackContext()
         var compressionSession: VTCompressionSession?
@@ -389,6 +395,7 @@ enum VideoTranscoder {
             writer.cancelWriting()
             throw TranscodeError.frameEncodingFailed(prepareStatus)
         }
+        reportStage("encoder-prepared", progress: 0.03, callback: progress)
 
         var decodedVideoFrames = 0
         var submittedVideoFrames = 0
@@ -431,6 +438,9 @@ enum VideoTranscoder {
                     throw TranscodeError.frameEncodingFailed(encodeStatus)
                 }
                 submittedVideoFrames += 1
+                if decodedVideoFrames == 1 || decodedVideoFrames.isMultiple(of: 30) {
+                    print("VT_TRANSCODE_FRAME=\(decodedVideoFrames)")
+                }
 
                 let drainLimit = CMTimeAdd(presentationTime, duration)
                 let drainResult = try drainReadySamples(
@@ -459,7 +469,7 @@ enum VideoTranscoder {
                             sessionStartTime
                         ))
                     )
-                    progress(min(0.98, completed / sourceDuration))
+                    progress(min(0.96, 0.03 + 0.93 * completed / sourceDuration))
                 }
             } catch {
                 reader.cancelReading()
@@ -468,6 +478,7 @@ enum VideoTranscoder {
             }
         }
 
+        reportStage("complete-frames", progress: 0.965, callback: progress)
         let completeStatus = VTCompressionSessionCompleteFrames(
             compressionSession,
             untilPresentationTimeStamp: .invalid
@@ -485,6 +496,7 @@ enum VideoTranscoder {
             writer: writer,
             cancellationToken: cancellationToken
         )
+        reportStage("samples-drained", progress: 0.975, callback: progress)
         videoWriterInput.markAsFinished()
 
         for channel in passthroughChannels {
@@ -499,12 +511,14 @@ enum VideoTranscoder {
         }
         try checkCancellation(cancellationToken)
 
+        reportStage("finish-writing", progress: 0.98, callback: progress)
         await writer.finishWriting()
         guard writer.status == .completed else {
             throw TranscodeError.writerFailed(
                 writer.error?.localizedDescription ?? "finishWriting 未完成"
             )
         }
+        reportStage("writer-finished", progress: 0.985, callback: progress)
 
         var hardwareValue: CFTypeRef?
         let hardwareStatus = VTSessionCopyProperty(
@@ -1135,6 +1149,15 @@ enum VideoTranscoder {
         if cancellationToken.isCancelled || Task.isCancelled {
             throw TranscodeError.cancelled
         }
+    }
+
+    private static func reportStage(
+        _ stage: String,
+        progress: Double,
+        callback: @escaping @Sendable (Double) -> Void
+    ) {
+        print("VT_TRANSCODE_STAGE=\(stage)")
+        callback(progress)
     }
 
     private static func thermalDescription(

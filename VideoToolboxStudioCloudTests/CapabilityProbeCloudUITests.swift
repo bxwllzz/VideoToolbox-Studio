@@ -185,7 +185,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         let summary = app.staticTexts["cloud-transcode-summary"]
         let error = app.staticTexts["cloud-transcode-error"]
         let progress = app.staticTexts["cloud-transcode-progress"]
-        let deadline = Date().addingTimeInterval(180)
+        let deadline = Date().addingTimeInterval(90)
         while Date() < deadline, !summary.exists, !error.exists {
             RunLoop.current.run(until: Date().addingTimeInterval(1))
         }
@@ -195,7 +195,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         }
         XCTAssertTrue(
             summary.exists,
-            "真实视频转码没有在 180 秒内完成；"
+            "真实视频转码没有在 90 秒内完成；"
                 + (progress.exists ? progress.label : "未回收到进度")
         )
         let metrics = app.staticTexts["cloud-transcode-metrics"]
