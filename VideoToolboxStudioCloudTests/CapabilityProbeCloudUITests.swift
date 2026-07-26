@@ -265,6 +265,46 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             runButton.waitForExistence(timeout: 60),
             "从系统照片库取得 AVAsset 后没有进入压缩设置页。"
         )
+
+        let capabilityStatus = app.descendants(
+            matching: .any
+        )["native-capability-status"]
+        makeHittableFromBelow(capabilityStatus, in: app)
+        XCTAssertTrue(
+            capabilityStatus.waitForExistence(timeout: 60),
+            "压缩设置页没有完成本机编码器支持字典检测。"
+        )
+        let averageBitRateProperty = app.descendants(
+            matching: .any
+        )["native-property-AverageBitRate"]
+        makeHittableFromBelow(averageBitRateProperty, in: app)
+        XCTAssertTrue(
+            averageBitRateProperty.waitForExistence(timeout: 30),
+            "默认互斥码率字段没有显示 AverageBitRate。"
+        )
+        XCTAssertFalse(
+            app.descendants(
+                matching: .any
+            )["native-property-ConstantBitRate"].exists,
+            "AverageBitRate 生效时不应同时显示 ConstantBitRate 输入行。"
+        )
+        let readOnlyProperty = app.descendants(
+            matching: .any
+        )["native-property-MaxFrameDelayCount"]
+        makeHittable(readOnlyProperty, in: app)
+        XCTAssertTrue(
+            readOnlyProperty.waitForExistence(timeout: 30),
+            "没有显示本机只读或不支持的 MaxFrameDelayCount。"
+        )
+        XCTAssertFalse(
+            readOnlyProperty.isEnabled,
+            "本机不可写的 MaxFrameDelayCount 没有置灰。"
+        )
+        let nativeCapabilityLabel = capabilityStatus.label
+        let nativeAverageBitRateLabel = averageBitRateProperty.label
+        let nativeReadOnlyPropertyLabel = readOnlyProperty.label
+
+        makeHittable(runButton, in: app)
         runButton.tap()
 
         let summary = app.staticTexts["cloud-transcode-summary"]
@@ -293,7 +333,7 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         makeHittable(multiPass, in: app)
         XCTAssertTrue(
             multiPass.waitForExistence(timeout: 30),
-            "没有回收到多遍编码实际执行或回退证据。"
+            "没有回收到 MultiPassStorage 实际执行或回退证据。"
         )
         XCTAssertTrue(
             summary.label.contains("1/1")
@@ -329,6 +369,9 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "schema_version": "1.0",
             "source": "system-photo-library",
             "source_metadata": sourceLabel,
+            "native_capability": nativeCapabilityLabel,
+            "native_average_bit_rate": nativeAverageBitRateLabel,
+            "native_read_only_property": nativeReadOnlyPropertyLabel,
             "summary": summaryLabel,
             "metrics": metricsLabel,
             "multi_pass": multiPassLabel,

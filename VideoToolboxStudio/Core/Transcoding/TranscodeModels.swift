@@ -55,7 +55,6 @@ struct TranscodeSource: Identifiable, @unchecked Sendable {
 }
 
 enum TranscodeTargetCodec: String, Codable, CaseIterable, Identifiable, Sendable {
-    case automatic
     case h264
     case hevc
 
@@ -63,8 +62,6 @@ enum TranscodeTargetCodec: String, Codable, CaseIterable, Identifiable, Sendable
 
     var title: String {
         switch self {
-        case .automatic:
-            "自动保真"
         case .h264:
             "H.264"
         case .hevc:
@@ -74,7 +71,7 @@ enum TranscodeTargetCodec: String, Codable, CaseIterable, Identifiable, Sendable
 
     func resolvedCodecType(isHDR: Bool) throws -> CMVideoCodecType {
         switch self {
-        case .automatic, .hevc:
+        case .hevc:
             return kCMVideoCodecType_HEVC
         case .h264:
             guard !isHDR else {
@@ -85,164 +82,624 @@ enum TranscodeTargetCodec: String, Codable, CaseIterable, Identifiable, Sendable
     }
 }
 
-enum TranscodeRateControl: String, Codable, CaseIterable, Identifiable, Sendable {
-    case sourceRatio
-    case fixedBitRate
-    case quality
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .sourceRatio:
-            "源码率比例"
-        case .fixedBitRate:
-            "固定平均码率"
-        case .quality:
-            "质量因子"
-        }
-    }
-}
-
-enum TranscodeEncodingQuality: String, Codable, CaseIterable, Identifiable, Sendable {
-    case standard
-    case refined
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .standard:
-            "标准"
-        case .refined:
-            "精细（更慢）"
-        }
-    }
-}
-
 struct TranscodeSettings: Codable, Equatable, Sendable {
     var targetCodec: TranscodeTargetCodec
-    var encodingQuality: TranscodeEncodingQuality
-    var rateControl: TranscodeRateControl
-    var sourceBitRateRatio: Double
-    var fixedBitRate: Int
-    var quality: Double
-    var dataRateLimitMultiplier: Double?
-    var maxKeyFrameInterval: Int
-    var maxKeyFrameIntervalDuration: Double
-    var allowFrameReordering: Bool
-    var realTime: Bool
-    var prioritizeEncodingSpeedOverQuality: Bool
+    var nativeProperties: [String: NativeCompressionValue]
 
-    static let balanced = TranscodeSettings(
-        targetCodec: .automatic,
-        encodingQuality: .standard,
-        rateControl: .sourceRatio,
-        sourceBitRateRatio: 0.60,
-        fixedBitRate: 8_000_000,
-        quality: 0.76,
-        dataRateLimitMultiplier: 1.50,
-        maxKeyFrameInterval: 0,
-        maxKeyFrameIntervalDuration: 2,
-        allowFrameReordering: true,
-        realTime: false,
-        prioritizeEncodingSpeedOverQuality: false
+    static let defaultSettings = TranscodeSettings(
+        targetCodec: .hevc,
+        nativeProperties: [
+            "AverageBitRate": .number(8_000_000),
+            "MaxKeyFrameInterval": .number(0),
+            "MaxKeyFrameIntervalDuration": .number(0),
+            "AllowFrameReordering": .bool(true),
+            "RealTime": .bool(false),
+            "PrioritizeEncodingSpeedOverQuality": .bool(false),
+        ]
     )
 
+    var multiPassStorageEnabled: Bool {
+        get {
+            nativeProperties["MultiPassStorage"] != nil
+        }
+        set {
+            if newValue {
+                nativeProperties["MultiPassStorage"] = .bool(true)
+                nativeProperties.removeValue(forKey: "RealTime")
+                nativeProperties.removeValue(
+                    forKey: "PrioritizeEncodingSpeedOverQuality"
+                )
+            } else {
+                nativeProperties.removeValue(forKey: "MultiPassStorage")
+            }
+        }
+    }
+
+    var averageBitRate: Int? {
+        get {
+            nativeProperties["AverageBitRate"]?.numberValue.map {
+                Int($0.rounded())
+            }
+        }
+        set {
+            setNumber(newValue.map(Double.init), forKey: "AverageBitRate")
+        }
+    }
+
+    var quality: Double? {
+        get {
+            nativeProperties["Quality"]?.numberValue
+        }
+        set {
+            setNumber(newValue, forKey: "Quality")
+        }
+    }
+
+    var dataRateLimits: [Double]? {
+        get {
+            guard let values = nativeProperties["DataRateLimits"]?.arrayValue else {
+                return nil
+            }
+            let numbers = values.compactMap(\.numberValue)
+            return numbers.count == values.count ? numbers : nil
+        }
+        set {
+            if let newValue {
+                nativeProperties["DataRateLimits"] = .array(
+                    newValue.map(NativeCompressionValue.number)
+                )
+            } else {
+                nativeProperties.removeValue(forKey: "DataRateLimits")
+            }
+        }
+    }
+
+    var maxKeyFrameInterval: Int {
+        get {
+            Int(
+                nativeProperties["MaxKeyFrameInterval"]?.numberValue?.rounded()
+                    ?? 0
+            )
+        }
+        set {
+            nativeProperties["MaxKeyFrameInterval"] = .number(Double(newValue))
+        }
+    }
+
+    var maxKeyFrameIntervalDuration: Double {
+        get {
+            nativeProperties["MaxKeyFrameIntervalDuration"]?.numberValue ?? 0
+        }
+        set {
+            nativeProperties["MaxKeyFrameIntervalDuration"] = .number(newValue)
+        }
+    }
+
+    var allowFrameReordering: Bool {
+        get {
+            nativeProperties["AllowFrameReordering"]?.boolValue ?? true
+        }
+        set {
+            nativeProperties["AllowFrameReordering"] = .bool(newValue)
+        }
+    }
+
+    var realTime: Bool {
+        get {
+            nativeProperties["RealTime"]?.boolValue ?? false
+        }
+        set {
+            nativeProperties["RealTime"] = .bool(newValue)
+        }
+    }
+
+    var prioritizeEncodingSpeedOverQuality: Bool {
+        get {
+            nativeProperties["PrioritizeEncodingSpeedOverQuality"]?.boolValue
+                ?? false
+        }
+        set {
+            nativeProperties["PrioritizeEncodingSpeedOverQuality"] = .bool(newValue)
+        }
+    }
+
+    var selectedRateControlKey: String? {
+        NativeCompressionPropertyCatalog.rateControlKeys.first {
+            nativeProperties[$0] != nil
+        }
+    }
+
+    mutating func selectRateControlProperty(_ key: String?) {
+        for candidate in NativeCompressionPropertyCatalog.rateControlKeys {
+            nativeProperties.removeValue(forKey: candidate)
+        }
+        guard let key,
+              let descriptor = NativeCompressionPropertyCatalog.byKey[key],
+              descriptor.applies(to: targetCodec)
+        else {
+            nativeProperties.removeValue(forKey: "DataRateLimits")
+            for vbvKey in NativeCompressionPropertyCatalog.vbvKeys {
+                nativeProperties.removeValue(forKey: vbvKey)
+            }
+            return
+        }
+        nativeProperties[key] = descriptor.suggestedValue ?? .number(0)
+        if key != "AverageBitRate" {
+            nativeProperties.removeValue(forKey: "DataRateLimits")
+        }
+        if key != "ConstantBitRate", key != "VariableBitRate" {
+            for vbvKey in NativeCompressionPropertyCatalog.vbvKeys {
+                nativeProperties.removeValue(forKey: vbvKey)
+            }
+        } else if key == "ConstantBitRate" {
+            nativeProperties.removeValue(forKey: "VBVMaxBitRate")
+        }
+    }
+
+    mutating func selectCodec(_ codec: TranscodeTargetCodec) {
+        targetCodec = codec
+        for descriptor in NativeCompressionPropertyCatalog.descriptors
+        where !descriptor.applies(to: codec) {
+            nativeProperties.removeValue(forKey: descriptor.key)
+        }
+    }
+
+    mutating func setNativeValue(
+        _ value: NativeCompressionValue?,
+        forKey key: String
+    ) {
+        if let value {
+            nativeProperties[key] = value
+        } else {
+            nativeProperties.removeValue(forKey: key)
+        }
+    }
+
+    func isVisibleInNativeEditor(
+        _ descriptor: NativeCompressionPropertyDescriptor
+    ) -> Bool {
+        if nativeProperties["AllowTemporalCompression"]?.boolValue == false,
+           (
+               descriptor.key == "AllowFrameReordering"
+                   || descriptor.key == "AllowOpenGOP"
+           ) {
+            return false
+        }
+        if multiPassStorageEnabled,
+           (
+               descriptor.key == "RealTime"
+                   || descriptor.key == "PrioritizeEncodingSpeedOverQuality"
+           ) {
+            return false
+        }
+        if realTime || prioritizeEncodingSpeedOverQuality,
+           descriptor.key == "MultiPassStorage" {
+            return false
+        }
+        if descriptor.key == "MaximumRealTimeFrameRate", !realTime {
+            return false
+        }
+        if descriptor.key == "FieldDetail",
+           nativeProperties["FieldCount"]?.numberValue != 2 {
+            return false
+        }
+        if descriptor.key == "GammaLevel",
+           nativeProperties["TransferFunction"]?.stringValue != "UseGamma" {
+            return false
+        }
+        if nativeProperties["PreserveAlphaChannel"]?.boolValue == false,
+           (
+               descriptor.key == "TargetQualityForAlpha"
+                   || descriptor.key == "AlphaChannelMode"
+           ) {
+            return false
+        }
+        return true
+    }
+
+    func sanitized(
+        for capabilities: NativeCompressionCapabilities
+    ) -> TranscodeSettings {
+        var result = self
+        for key in Array(result.nativeProperties.keys) {
+            guard let descriptor = NativeCompressionPropertyCatalog.byKey[key],
+                  descriptor.applies(to: result.targetCodec),
+                  capabilities.isWritable(descriptor)
+            else {
+                result.nativeProperties.removeValue(forKey: key)
+                continue
+            }
+        }
+
+        let selectedRateControlKey = result.selectedRateControlKey
+        for key in NativeCompressionPropertyCatalog.rateControlKeys
+        where key != selectedRateControlKey {
+            result.nativeProperties.removeValue(forKey: key)
+        }
+        result.removeInactiveDependentProperties()
+        return result
+    }
+
+    private mutating func removeInactiveDependentProperties() {
+        if selectedRateControlKey != "AverageBitRate" {
+            nativeProperties.removeValue(forKey: "DataRateLimits")
+        }
+        if selectedRateControlKey != "ConstantBitRate",
+           selectedRateControlKey != "VariableBitRate" {
+            for key in NativeCompressionPropertyCatalog.vbvKeys {
+                nativeProperties.removeValue(forKey: key)
+            }
+        } else if selectedRateControlKey == "ConstantBitRate" {
+            nativeProperties.removeValue(forKey: "VBVMaxBitRate")
+        }
+        if nativeProperties["AllowTemporalCompression"]?.boolValue == false {
+            nativeProperties.removeValue(forKey: "AllowFrameReordering")
+            nativeProperties.removeValue(forKey: "AllowOpenGOP")
+        }
+        if !realTime {
+            nativeProperties.removeValue(forKey: "MaximumRealTimeFrameRate")
+        }
+        if nativeProperties["FieldCount"]?.numberValue != 2 {
+            nativeProperties.removeValue(forKey: "FieldDetail")
+        }
+        if nativeProperties["TransferFunction"]?.stringValue != "UseGamma" {
+            nativeProperties.removeValue(forKey: "GammaLevel")
+        }
+        if nativeProperties["PreserveAlphaChannel"]?.boolValue == false {
+            nativeProperties.removeValue(forKey: "TargetQualityForAlpha")
+            nativeProperties.removeValue(forKey: "AlphaChannelMode")
+        }
+        if multiPassStorageEnabled {
+            nativeProperties.removeValue(forKey: "RealTime")
+            nativeProperties.removeValue(
+                forKey: "PrioritizeEncodingSpeedOverQuality"
+            )
+        }
+    }
+
+    private mutating func setNumber(_ value: Double?, forKey key: String) {
+        if let value {
+            nativeProperties[key] = .number(value)
+        } else {
+            nativeProperties.removeValue(forKey: key)
+        }
+    }
+
     func validate() throws {
-        if encodingQuality == .refined,
+        if multiPassStorageEnabled,
            (realTime || prioritizeEncodingSpeedOverQuality)
         {
             throw TranscodeError.invalidSettings(
-                "精细编码不能同时启用实时编码或速度优先。"
+                "MultiPassStorage 不能同时启用 RealTime 或 "
+                    + "PrioritizeEncodingSpeedOverQuality。"
             )
         }
-        guard (0.10...1.50).contains(sourceBitRateRatio) else {
-            throw TranscodeError.invalidSettings("源码率比例必须在 10%～150% 之间。")
+        let rateControlCount = NativeCompressionPropertyCatalog.rateControlKeys
+            .filter { nativeProperties[$0] != nil }
+            .count
+        if rateControlCount > 1 {
+            throw TranscodeError.invalidSettings(
+                "AverageBitRate、ConstantBitRate、VariableBitRate、Quality "
+                    + "与 ConstantQualityFactor 只能设置其中一项。"
+            )
         }
-        guard (100_000...200_000_000).contains(fixedBitRate) else {
-            throw TranscodeError.invalidSettings("固定平均码率必须在 0.1～200 Mbps 之间。")
+        if nativeProperties["DataRateLimits"] != nil,
+           selectedRateControlKey != "AverageBitRate" {
+            throw TranscodeError.invalidSettings(
+                "DataRateLimits 仅在当前选择 AverageBitRate 时显示和写入。"
+            )
         }
-        guard (0...1).contains(quality) else {
-            throw TranscodeError.invalidSettings("质量因子必须在 0～1 之间。")
+        if nativeProperties["VBVMaxBitRate"] != nil,
+           selectedRateControlKey != "VariableBitRate" {
+            throw TranscodeError.invalidSettings(
+                "VBVMaxBitRate 仅能与 VariableBitRate 同时设置。"
+            )
         }
-        if let dataRateLimitMultiplier,
-           !(1...4).contains(dataRateLimitMultiplier)
-        {
-            throw TranscodeError.invalidSettings("峰值码率倍数必须在 1～4 之间。")
+        let hasVBVTiming = nativeProperties["VBVBufferDuration"] != nil
+            || nativeProperties["VBVInitialDelayPercentage"] != nil
+        if hasVBVTiming,
+           selectedRateControlKey != "VariableBitRate",
+           selectedRateControlKey != "ConstantBitRate" {
+            throw TranscodeError.invalidSettings(
+                "VBVBufferDuration 与 VBVInitialDelayPercentage "
+                    + "仅能用于 ConstantBitRate 或 VariableBitRate。"
+            )
         }
-        guard (0...1_000_000).contains(maxKeyFrameInterval) else {
-            throw TranscodeError.invalidSettings("最大关键帧间隔不能小于 0。")
+        if let dataRateLimits {
+            guard dataRateLimits.count.isMultiple(of: 2),
+                  !dataRateLimits.isEmpty,
+                  dataRateLimits.enumerated().allSatisfy({
+                      $0.element.isFinite && $0.element > 0
+                  })
+            else {
+                throw TranscodeError.invalidSettings(
+                    "DataRateLimits 必须交替包含正数的数据量（字节）"
+                        + "与时间窗口（秒）。"
+                )
+            }
         }
-        guard (0...3_600).contains(maxKeyFrameIntervalDuration) else {
-            throw TranscodeError.invalidSettings("最大关键帧时长必须在 0～3600 秒之间。")
+        if nativeProperties["AllowTemporalCompression"]?.boolValue == false,
+           (
+               allowFrameReordering
+                   || nativeProperties["AllowOpenGOP"]?.boolValue == true
+           ) {
+            throw TranscodeError.invalidSettings(
+                "AllowTemporalCompression 关闭时不能启用 "
+                    + "AllowFrameReordering 或 AllowOpenGOP。"
+            )
+        }
+        if nativeProperties["MaximumRealTimeFrameRate"] != nil, !realTime {
+            throw TranscodeError.invalidSettings(
+                "MaximumRealTimeFrameRate 仅能在 RealTime 开启时设置。"
+            )
+        }
+        if nativeProperties["FieldDetail"] != nil,
+           nativeProperties["FieldCount"]?.numberValue != 2 {
+            throw TranscodeError.invalidSettings(
+                "FieldDetail 仅能在 FieldCount 为 2 时设置。"
+            )
+        }
+        if nativeProperties["GammaLevel"] != nil,
+           nativeProperties["TransferFunction"]?.stringValue != "UseGamma" {
+            throw TranscodeError.invalidSettings(
+                "GammaLevel 仅能与 TransferFunction=UseGamma 同时设置。"
+            )
+        }
+        if nativeProperties["PreserveAlphaChannel"]?.boolValue == false,
+           (
+               nativeProperties["TargetQualityForAlpha"] != nil
+                   || nativeProperties["AlphaChannelMode"] != nil
+           ) {
+            throw TranscodeError.invalidSettings(
+                "PreserveAlphaChannel 关闭时不能设置 Alpha 子字段。"
+            )
+        }
+        if targetCodec == .h264,
+           (
+               nativeProperties["ProfileLevel"]?.stringValue ?? ""
+           ).localizedCaseInsensitiveContains("Baseline"),
+           nativeProperties["H264EntropyMode"]?.stringValue == "CABAC" {
+            throw TranscodeError.invalidSettings(
+                "H.264 Baseline ProfileLevel 不能使用 CABAC。"
+            )
+        }
+        if let minimumQP = nativeProperties["MinAllowedFrameQP"]?.numberValue,
+           let maximumQP = nativeProperties["MaxAllowedFrameQP"]?.numberValue,
+           minimumQP > maximumQP {
+            throw TranscodeError.invalidSettings(
+                "MinAllowedFrameQP 不能大于 MaxAllowedFrameQP。"
+            )
+        }
+
+        for (key, value) in nativeProperties {
+            guard let descriptor = NativeCompressionPropertyCatalog.byKey[key] else {
+                throw TranscodeError.invalidSettings(
+                    "未知或非公开的 VideoToolbox 属性：\(key)。"
+                )
+            }
+            guard descriptor.applies(to: targetCodec) else {
+                throw TranscodeError.invalidSettings(
+                    "\(key) 不适用于当前 \(targetCodec.title) 编码器。"
+                )
+            }
+            guard descriptor.isPubliclySettable else {
+                throw TranscodeError.invalidSettings(
+                    "\(key) 是只读原生属性，不能写入。"
+                )
+            }
+            guard descriptor.accepts(value) else {
+                throw TranscodeError.invalidSettings(
+                    "\(key) 的值类型与原生字段类型不一致。"
+                )
+            }
+            if let number = value.numberValue {
+                guard number.isFinite else {
+                    throw TranscodeError.invalidSettings("\(key) 必须是有限数值。")
+                }
+                if let minimum = descriptor.minimum, number < minimum {
+                    throw TranscodeError.invalidSettings(
+                        "\(key) 不能小于 \(minimum)。"
+                    )
+                }
+                if let maximum = descriptor.maximum, number > maximum {
+                    throw TranscodeError.invalidSettings(
+                        "\(key) 不能大于 \(maximum)。"
+                    )
+                }
+            }
         }
     }
 }
 
-enum TranscodePreset: String, CaseIterable, Identifiable, Sendable {
-    case fidelity
-    case balanced
-    case compact
-    case compatible
-    case custom
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .fidelity:
-            "保真优先"
-        case .balanced:
-            "均衡压缩"
-        case .compact:
-            "更小体积"
-        case .compatible:
-            "H.264 兼容"
-        case .custom:
-            "专业自定义"
+private extension NativeCompressionPropertyDescriptor {
+    func accepts(_ value: NativeCompressionValue) -> Bool {
+        switch (kind, value) {
+        case (.boolean, .bool),
+             (.number, .number),
+             (.enumeration, .string),
+             (.multiPassStorage, .bool),
+             (.json, _):
+            true
+        case (.base64Data, .string(let value)):
+            Data(base64Encoded: value) != nil
+        case (.integer, .number(let number)):
+            number.rounded() == number
+                && number >= Double(Int64.min)
+                && number <= Double(Int64.max)
+        case (.dataRateLimits, .array(let values)):
+            !values.isEmpty
+                && values.count.isMultiple(of: 2)
+                && values.allSatisfy {
+                    guard case .number(let number) = $0 else {
+                        return false
+                    }
+                    return number.isFinite && number > 0
+                }
+        default:
+            false
         }
     }
+}
 
-    var summary: String {
-        switch self {
-        case .fidelity:
-            "HEVC，源视频码率约 80%，保留更多画面细节。"
-        case .balanced:
-            "HEVC，源视频码率约 60%，适合大多数视频。"
-        case .compact:
-            "HEVC，源视频码率约 40%，优先减小文件。"
-        case .compatible:
-            "H.264，源视频码率约 70%；HDR 输入会明确拒绝。"
-        case .custom:
-            "直接控制公开的 VideoToolbox 编码参数。"
-        }
+extension TranscodeSettings {
+    private enum CodingKeys: String, CodingKey {
+        case targetCodec
+        case nativeProperties
+
+        // 仅用于读取旧版设置；新偏好只写入 nativeProperties。
+        case multiPassStorageEnabled
+        case multiPassMode
+        case encodingQuality
+        case averageBitRate
+        case dataRateLimits
+
+        // 仅用于读取旧版 App 自造字段；新报告和新偏好不再写入。
+        case rateControl
+        case fixedBitRate
+        case quality
+        case dataRateLimitMultiplier
+        case maxKeyFrameInterval
+        case maxKeyFrameIntervalDuration
+        case allowFrameReordering
+        case realTime
+        case prioritizeEncodingSpeedOverQuality
     }
 
-    var settings: TranscodeSettings {
-        switch self {
-        case .fidelity:
-            var value = TranscodeSettings.balanced
-            value.encodingQuality = .refined
-            value.sourceBitRateRatio = 0.80
-            value.quality = 0.88
-            return value
-        case .balanced:
-            return .balanced
-        case .compact:
-            var value = TranscodeSettings.balanced
-            value.sourceBitRateRatio = 0.40
-            value.quality = 0.62
-            value.dataRateLimitMultiplier = 1.25
-            return value
-        case .compatible:
-            var value = TranscodeSettings.balanced
-            value.targetCodec = .h264
-            value.sourceBitRateRatio = 0.70
-            return value
-        case .custom:
-            return .balanced
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = TranscodeSettings.defaultSettings
+
+        let savedCodec = try container.decodeIfPresent(
+            String.self,
+            forKey: .targetCodec
+        )
+        if savedCodec == "automatic" {
+            targetCodec = .hevc
+        } else {
+            targetCodec = savedCodec
+                .flatMap(TranscodeTargetCodec.init(rawValue:))
+                ?? fallback.targetCodec
         }
+        if let properties = try container.decodeIfPresent(
+            [String: NativeCompressionValue].self,
+            forKey: .nativeProperties
+        ) {
+            nativeProperties = properties
+            return
+        }
+        nativeProperties = [:]
+
+        if let enabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .multiPassStorageEnabled
+        ) {
+            if enabled {
+                nativeProperties["MultiPassStorage"] = .bool(true)
+            }
+        } else {
+            let legacyMultiPassMode = try container.decodeIfPresent(
+                String.self,
+                forKey: .multiPassMode
+            )
+            let legacyEncodingQuality = try container.decodeIfPresent(
+                String.self,
+                forKey: .encodingQuality
+            )
+            if legacyMultiPassMode == "automatic"
+                || legacyEncodingQuality == "refined" {
+                nativeProperties["MultiPassStorage"] = .bool(true)
+            }
+        }
+
+        if container.contains(.averageBitRate) {
+            if let value = try container.decodeIfPresent(
+                Int.self,
+                forKey: .averageBitRate
+            ) {
+                nativeProperties["AverageBitRate"] = .number(Double(value))
+            }
+            if let value = try container.decodeIfPresent(
+                Double.self,
+                forKey: .quality
+            ) {
+                nativeProperties["Quality"] = .number(value)
+            }
+            if let values = try container.decodeIfPresent(
+                [Double].self,
+                forKey: .dataRateLimits
+            ) {
+                nativeProperties["DataRateLimits"] = .array(
+                    values.map(NativeCompressionValue.number)
+                )
+            }
+        } else {
+            let legacyRateControl = try container.decodeIfPresent(
+                String.self,
+                forKey: .rateControl
+            )
+            if legacyRateControl == "quality" {
+                let value = try container.decodeIfPresent(
+                    Double.self,
+                    forKey: .quality
+                ) ?? 0.76
+                nativeProperties["Quality"] = .number(value)
+            } else {
+                let value = try container.decodeIfPresent(
+                    Int.self,
+                    forKey: .fixedBitRate
+                ) ?? fallback.averageBitRate
+                if let value {
+                    nativeProperties["AverageBitRate"] = .number(Double(value))
+                }
+            }
+
+            if let multiplier = try container.decodeIfPresent(
+                Double.self,
+                forKey: .dataRateLimitMultiplier
+            ), let averageBitRate {
+                nativeProperties["DataRateLimits"] = .array([
+                    .number(Double(averageBitRate) * multiplier / 8),
+                    .number(1),
+                ])
+            }
+        }
+        let maxKeyFrameInterval = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxKeyFrameInterval
+        ) ?? fallback.maxKeyFrameInterval
+        nativeProperties["MaxKeyFrameInterval"] = .number(
+            Double(maxKeyFrameInterval)
+        )
+        let maxKeyFrameIntervalDuration = try container.decodeIfPresent(
+            Double.self,
+            forKey: .maxKeyFrameIntervalDuration
+        ) ?? fallback.maxKeyFrameIntervalDuration
+        nativeProperties["MaxKeyFrameIntervalDuration"] = .number(
+            maxKeyFrameIntervalDuration
+        )
+        let allowFrameReordering = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .allowFrameReordering
+        ) ?? fallback.allowFrameReordering
+        nativeProperties["AllowFrameReordering"] = .bool(allowFrameReordering)
+        let realTime = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .realTime
+        ) ?? fallback.realTime
+        nativeProperties["RealTime"] = .bool(realTime)
+        let speedPriority = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .prioritizeEncodingSpeedOverQuality
+        ) ?? fallback.prioritizeEncodingSpeedOverQuality
+        nativeProperties["PrioritizeEncodingSpeedOverQuality"] = .bool(
+            speedPriority
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(targetCodec.rawValue, forKey: .targetCodec)
+        try container.encode(nativeProperties, forKey: .nativeProperties)
     }
 }
 
@@ -330,9 +787,10 @@ struct PreservationCheck: Codable, Equatable, Sendable {
 struct ResolvedTranscodeSettings: Codable, Equatable, Sendable {
     let codecType: UInt32
     let codecFourCC: String
-    let encodingQuality: TranscodeEncodingQuality
+    let multiPassStorageEnabled: Bool
     let profileLevel: String
     let pixelFormat: UInt32
+    let nativeProperties: [String: NativeCompressionValue]
     let averageBitRate: Int?
     let quality: Double?
     let dataRateLimits: [Double]?
@@ -376,7 +834,7 @@ enum TranscodeError: LocalizedError, Equatable {
         case .multipleVideoTracks(let count):
             "输入包含 \(count) 条视频轨道；当前版本为避免静默丢失，只接受单视频轨道文件。"
         case .hdrRequiresHEVC:
-            "HDR 或 10-bit 输入不能用 H.264 保真输出，请选择“自动保真”或 HEVC。"
+            "HDR 或 10-bit 输入不能用 H.264 保真输出，请选择 HEVC。"
         case .cannotPreserveTrack(let description):
             "MOV 容器无法无损承载轨道 \(description)，任务已停止且未生成残缺输出。"
         case .readerFailed(let message):

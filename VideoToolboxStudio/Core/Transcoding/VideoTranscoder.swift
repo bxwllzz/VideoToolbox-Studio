@@ -134,7 +134,7 @@ enum VideoTranscoder {
                 outputToInputSizeRatio: ratio
             )
             let report = TranscodeReport(
-                schemaVersion: "1.0",
+                schemaVersion: "1.3",
                 generatedAt: ISO8601DateFormatter().string(from: Date()),
                 app: AppIdentity(
                     version: buildReport.appVersion,
@@ -249,7 +249,7 @@ enum VideoTranscoder {
             (Double(sampleSummary.fileSize)
                 * inputSummary.durationSeconds / measuredDuration).rounded()
         )
-        let uncertainty = settings.rateControl == .quality ? 0.30 : 0.15
+        let uncertainty = settings.quality != nil ? 0.30 : 0.15
         let lowerBound = Int64(
             (Double(estimatedBytes) * (1 - uncertainty)).rounded()
         )
@@ -277,54 +277,57 @@ enum VideoTranscoder {
         codecType: CMVideoCodecType,
         isHDR: Bool
     ) -> ResolvedTranscodeSettings {
-        let sourceBitRate = max(100_000, Int(sourceVideo.estimatedDataRate.rounded()))
-        let averageBitRate: Int?
-        let quality: Double?
-        switch settings.rateControl {
-        case .sourceRatio:
-            averageBitRate = max(
-                100_000,
-                Int(Double(sourceBitRate) * settings.sourceBitRateRatio)
-            )
-            quality = nil
-        case .fixedBitRate:
-            averageBitRate = settings.fixedBitRate
-            quality = nil
-        case .quality:
-            averageBitRate = nil
-            quality = settings.quality
-        }
-
-        let dataRateLimits = settings.dataRateLimitMultiplier.map { multiplier in
-            let limitBaseBitRate = averageBitRate ?? sourceBitRate
-            return [Double(limitBaseBitRate) * multiplier / 8, 1]
-        }
         let frameRate = max(1, sourceVideo.nominalFrameRate)
-        let profileLevel: String
+        let automaticProfileLevel: String
         let pixelFormat: OSType
         if codecType == kCMVideoCodecType_HEVC {
             if isHDR {
-                profileLevel = kVTProfileLevel_HEVC_Main10_AutoLevel as String
+                automaticProfileLevel =
+                    kVTProfileLevel_HEVC_Main10_AutoLevel as String
                 pixelFormat = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
             } else {
-                profileLevel = kVTProfileLevel_HEVC_Main_AutoLevel as String
+                automaticProfileLevel =
+                    kVTProfileLevel_HEVC_Main_AutoLevel as String
                 pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             }
         } else {
-            profileLevel = kVTProfileLevel_H264_High_AutoLevel as String
+            automaticProfileLevel =
+                kVTProfileLevel_H264_High_AutoLevel as String
             pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        }
+        var nativeProperties = settings.nativeProperties
+        let profileLevel =
+            nativeProperties["ProfileLevel"]?.stringValue
+                ?? automaticProfileLevel
+        nativeProperties["ProfileLevel"] = .string(profileLevel)
+        let expectedFrameRate =
+            nativeProperties["ExpectedFrameRate"]?.numberValue
+                ?? frameRate
+        nativeProperties["ExpectedFrameRate"] = .number(expectedFrameRate)
+        if nativeProperties["ColorPrimaries"] == nil,
+           let colorPrimaries = sourceVideo.color?.colorPrimaries {
+            nativeProperties["ColorPrimaries"] = .string(colorPrimaries)
+        }
+        if nativeProperties["TransferFunction"] == nil,
+           let transferFunction = sourceVideo.color?.transferFunction {
+            nativeProperties["TransferFunction"] = .string(transferFunction)
+        }
+        if nativeProperties["YCbCrMatrix"] == nil,
+           let yCbCrMatrix = sourceVideo.color?.yCbCrMatrix {
+            nativeProperties["YCbCrMatrix"] = .string(yCbCrMatrix)
         }
 
         return ResolvedTranscodeSettings(
             codecType: codecType,
             codecFourCC: mediaFourCC(codecType),
-            encodingQuality: settings.encodingQuality,
+            multiPassStorageEnabled: settings.multiPassStorageEnabled,
             profileLevel: profileLevel,
             pixelFormat: pixelFormat,
-            averageBitRate: averageBitRate,
-            quality: quality,
-            dataRateLimits: dataRateLimits,
-            expectedFrameRate: frameRate,
+            nativeProperties: nativeProperties,
+            averageBitRate: settings.averageBitRate,
+            quality: settings.quality,
+            dataRateLimits: settings.dataRateLimits,
+            expectedFrameRate: expectedFrameRate,
             maxKeyFrameInterval: settings.maxKeyFrameInterval,
             maxKeyFrameIntervalDuration: settings.maxKeyFrameIntervalDuration,
             allowFrameReordering: settings.allowFrameReordering,
@@ -345,7 +348,7 @@ enum VideoTranscoder {
         timeRange: CMTimeRange?,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> RuntimeTranscodeResult {
-        guard resolvedSettings.encodingQuality == .refined else {
+        guard resolvedSettings.multiPassStorageEnabled else {
             return try await encodeSinglePass(
                 asset: asset,
                 videoTrack: videoTrack,
@@ -1515,112 +1518,53 @@ enum VideoTranscoder {
         sourceColor: MediaColorSummary?
     ) throws -> [PropertyWriteResult] {
         var writes: [PropertyWriteResult] = []
+        var values = settings.nativeProperties
+        if values["ColorPrimaries"] == nil,
+           let colorPrimaries = sourceColor?.colorPrimaries {
+            values["ColorPrimaries"] = .string(colorPrimaries)
+        }
+        if values["TransferFunction"] == nil,
+           let transferFunction = sourceColor?.transferFunction {
+            values["TransferFunction"] = .string(transferFunction)
+        }
+        if values["YCbCrMatrix"] == nil,
+           let yCbCrMatrix = sourceColor?.yCbCrMatrix {
+            values["YCbCrMatrix"] = .string(yCbCrMatrix)
+        }
 
-        try appendProperty(
-            to: &writes,
-            session: session,
-            key: kVTCompressionPropertyKey_ProfileLevel,
-            name: "ProfileLevel",
-            value: settings.profileLevel as CFString
-        )
-        try appendProperty(
-            to: &writes,
-            session: session,
-            key: kVTCompressionPropertyKey_ExpectedFrameRate,
-            name: "ExpectedFrameRate",
-            value: NSNumber(value: settings.expectedFrameRate)
-        )
-        if let averageBitRate = settings.averageBitRate {
+        let priority = [
+            "ProfileLevel",
+            "RealTime",
+            "ExpectedFrameRate",
+        ]
+        let orderedKeys = priority + NativeCompressionPropertyCatalog.descriptors
+            .map(\.key)
+            .filter { !priority.contains($0) }
+        for key in orderedKeys {
+            guard key != "MultiPassStorage",
+                  let value = values[key],
+                  value != .null,
+                  let descriptor = NativeCompressionPropertyCatalog.byKey[key]
+            else {
+                continue
+            }
+            let foundationValue: CFTypeRef
+            if case .integer = descriptor.kind,
+               let number = value.numberValue {
+                foundationValue = NSNumber(value: Int64(number.rounded()))
+            } else if case .base64Data = descriptor.kind,
+                      let base64 = value.stringValue,
+                      let data = Data(base64Encoded: base64) {
+                foundationValue = data as NSData
+            } else {
+                foundationValue = value.foundationObject
+            }
             try appendProperty(
                 to: &writes,
                 session: session,
-                key: kVTCompressionPropertyKey_AverageBitRate,
-                name: "AverageBitRate",
-                value: NSNumber(value: averageBitRate)
-            )
-        }
-        if let quality = settings.quality {
-            try appendProperty(
-                to: &writes,
-                session: session,
-                key: kVTCompressionPropertyKey_Quality,
-                name: "Quality",
-                value: NSNumber(value: quality)
-            )
-        }
-        if let limits = settings.dataRateLimits {
-            let values = limits.map(NSNumber.init(value:)) as CFArray
-            try appendProperty(
-                to: &writes,
-                session: session,
-                key: kVTCompressionPropertyKey_DataRateLimits,
-                name: "DataRateLimits",
-                value: values
-            )
-        }
-        try appendProperty(
-            to: &writes,
-            session: session,
-            key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
-            name: "MaxKeyFrameInterval",
-            value: NSNumber(value: settings.maxKeyFrameInterval)
-        )
-        try appendProperty(
-            to: &writes,
-            session: session,
-            key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
-            name: "MaxKeyFrameIntervalDuration",
-            value: NSNumber(value: settings.maxKeyFrameIntervalDuration)
-        )
-        try appendProperty(
-            to: &writes,
-            session: session,
-            key: kVTCompressionPropertyKey_AllowFrameReordering,
-            name: "AllowFrameReordering",
-            value: settings.allowFrameReordering ? kCFBooleanTrue : kCFBooleanFalse
-        )
-        try appendProperty(
-            to: &writes,
-            session: session,
-            key: kVTCompressionPropertyKey_RealTime,
-            name: "RealTime",
-            value: settings.realTime ? kCFBooleanTrue : kCFBooleanFalse
-        )
-        try appendProperty(
-            to: &writes,
-            session: session,
-            key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
-            name: "PrioritizeEncodingSpeedOverQuality",
-            value: settings.prioritizeEncodingSpeedOverQuality
-                ? kCFBooleanTrue
-                : kCFBooleanFalse
-        )
-
-        if let colorPrimaries = sourceColor?.colorPrimaries {
-            try appendProperty(
-                to: &writes,
-                session: session,
-                key: kVTCompressionPropertyKey_ColorPrimaries,
-                name: "ColorPrimaries",
-                value: colorPrimaries as CFString
-            )
-        }
-        if let transferFunction = sourceColor?.transferFunction {
-            try appendProperty(
-                to: &writes,
-                session: session,
-                key: kVTCompressionPropertyKey_TransferFunction,
-                name: "TransferFunction",
-                value: transferFunction as CFString
-            )
-        }
-        if let yCbCrMatrix = sourceColor?.yCbCrMatrix {
-            try appendProperty(
-                to: &writes,
-                session: session,
-                key: kVTCompressionPropertyKey_YCbCrMatrix,
-                name: "YCbCrMatrix",
-                value: yCbCrMatrix as CFString
+                key: key as CFString,
+                name: key,
+                value: foundationValue
             )
         }
         return writes
