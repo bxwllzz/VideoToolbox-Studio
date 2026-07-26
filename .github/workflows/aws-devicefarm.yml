@@ -46,8 +46,8 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       (
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        github.event.pull_request.user.login == github.repository_owner
+        github.event.pull_request.head.repo.id == github.event.repository.id &&
+        github.event.pull_request.user.id == 4355526
       )
     runs-on: macos-26
     timeout-minutes: 60
@@ -152,11 +152,17 @@ jobs:
               for key in (
                   "aud",
                   "sub",
+                  "actor",
+                  "actor_id",
                   "repository",
+                  "repository_id",
                   "repository_owner",
+                  "repository_owner_id",
                   "ref",
                   "sha",
                   "workflow",
+                  "workflow_ref",
+                  "job_workflow_ref",
                   "job",
                   "environment",
               )
@@ -169,7 +175,7 @@ jobs:
           )
           PY
           unset OIDC_TOKEN_FOR_CLAIMS oidc_token response
-          jq '{aud, sub, repository, ref, workflow, job, environment}' \
+          jq '{aud, sub, actor, actor_id, repository, repository_id, repository_owner, repository_owner_id, ref, workflow, workflow_ref, job_workflow_ref, job, environment}' \
             build/aws-devicefarm/logs/oidc-claims.json
 
       - name: 通过 OIDC 获取 AWS 临时凭据
