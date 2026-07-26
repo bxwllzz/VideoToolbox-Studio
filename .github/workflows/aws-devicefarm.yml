@@ -13,6 +13,11 @@ on:
       - "scripts/run-aws-devicefarm-xcuitest.sh"
       - "scripts/install-xcodegen.sh"
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
     branches:
       - main
     paths:
@@ -47,6 +52,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       (
+        github.event.pull_request.draft == false &&
         github.event.pull_request.head.repo.id == github.event.repository.id &&
         github.event.pull_request.user.id == 4355526
       )
