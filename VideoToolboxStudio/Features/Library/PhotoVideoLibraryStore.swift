@@ -183,6 +183,16 @@ private enum PhotoLibraryCloudTestSeeder {
             throw PhotoVideoImportError.cloudTestSeedUnavailable
         }
 
+        try await createVideoAsset(at: sourceURL)
+        hasSeeded = true
+    }
+
+    /// PhotoKit executes its change block on a private queue. Keep the closure
+    /// outside MainActor isolation so Swift 6 does not install a main-executor
+    /// precondition that would trap on a real device.
+    nonisolated private static func createVideoAsset(
+        at sourceURL: URL
+    ) async throws {
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges({
@@ -200,7 +210,6 @@ private enum PhotoLibraryCloudTestSeeder {
                 }
             })
         }
-        hasSeeded = true
     }
 }
 
