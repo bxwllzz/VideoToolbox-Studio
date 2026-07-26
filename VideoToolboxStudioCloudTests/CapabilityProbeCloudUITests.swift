@@ -382,21 +382,20 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             photoSaveSuccess.waitForExistence(timeout: 30),
             "转换完成后没有默认保存到系统照片库。"
         )
-        let finalDiagnostics = app.descendants(
-            matching: .any
-        ).matching(
+        let finalDiagnostics = app.staticTexts.matching(
             identifier: "transcode-runtime-diagnostics"
+        ).matching(
+            NSPredicate(
+                format: "label CONTAINS %@",
+                "输出容器写入完成"
+            )
         ).firstMatch
         makeHittable(finalDiagnostics, in: app)
         XCTAssertTrue(
             finalDiagnostics.waitForExistence(timeout: 30),
-            "转码结束后没有保留只读状态与诊断数据。"
+            "转码结束后没有保留最终写入阶段的只读状态与诊断数据。"
         )
         let finalDiagnosticsLabel = finalDiagnostics.label
-        XCTAssertTrue(
-            finalDiagnosticsLabel.contains("输出容器写入完成"),
-            "转码结束后没有显示最终写入阶段：\(finalDiagnosticsLabel)"
-        )
 
         let settingsNavigationBar = app.navigationBars["压缩设置"]
         let backButton = settingsNavigationBar.buttons.firstMatch
