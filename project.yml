@@ -25,9 +25,10 @@ targets:
       - path: VideoToolboxStudio
         excludes:
           - Resources
-    resources:
       - path: VideoToolboxStudio/Resources/Assets.xcassets
+        buildPhase: resources
       - path: VideoToolboxStudio/Resources/TestMedia
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.bxwllzz.VideoToolboxStudio

@@ -66,6 +66,7 @@ struct TranscodeView: View {
                 Label(importError, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
                     .foregroundStyle(.red)
+                    .accessibilityIdentifier("transcode-import-error")
             }
         }
     }

@@ -182,6 +182,12 @@ final class CapabilityProbeCloudUITests: XCTestCase {
         )
         runButton.tap()
 
+        let importError = app.staticTexts["transcode-import-error"]
+        if importError.waitForExistence(timeout: 5) {
+            XCTFail("云端转码素材不可用：\(importError.label)")
+            return
+        }
+
         let summary = app.staticTexts["cloud-transcode-summary"]
         let error = app.staticTexts["cloud-transcode-error"]
         let progress = app.staticTexts["cloud-transcode-progress"]

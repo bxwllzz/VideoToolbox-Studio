@@ -98,6 +98,11 @@ jobs:
             find "${products}" -maxdepth 2 -print >&2
             exit 1
           fi
+          if [[ ! -f "${app_path}/CloudTranscodeSample.mov" ]]; then
+            echo "错误：测试素材没有进入 App Bundle，拒绝消耗真机时间。" >&2
+            find "${app_path}" -maxdepth 2 -print >&2
+            exit 1
+          fi
 
           mkdir -p build/aws-devicefarm/package/Payload
           ditto "${app_path}" build/aws-devicefarm/package/Payload/VideoToolboxStudio.app
