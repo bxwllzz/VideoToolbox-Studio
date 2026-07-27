@@ -1486,10 +1486,20 @@ enum VideoTranscoder {
         }
     }
 
+    static func firstNumericPresentationTime(
+        in sampleTimes: [CMTime]
+    ) -> CMTime? {
+        sampleTimes.first(where: \.isNumeric)
+    }
+
     static func shouldDeferPassthroughSample(
         presentationTime: CMTime,
-        through limit: CMTime
+        through limit: CMTime,
+        isUntimedPrefixBeforeNumericSample: Bool = false
     ) -> Bool {
+        if isUntimedPrefixBeforeNumericSample {
+            return false
+        }
         guard limit != .positiveInfinity else {
             return false
         }
@@ -2557,9 +2567,10 @@ private final class FrameSiloWriterContext: @unchecked Sendable {
 private final class PassthroughChannel {
     let readerOutput: AVAssetReaderTrackOutput
     let writerInput: AVAssetWriterInput
-    private var pendingSample: CMSampleBuffer?
+    private var pendingSamples: [CMSampleBuffer] = []
     private var writerSessionStartTime: CMTime?
-    private(set) var reachedEnd = false
+    private var readerReachedEnd = false
+    private var untimedPrefixSampleCount = 0
 
     init(
         readerOutput: AVAssetReaderTrackOutput,
@@ -2570,17 +2581,22 @@ private final class PassthroughChannel {
     }
 
     var pendingPresentationTime: CMTime? {
-        pendingSample.map(CMSampleBufferGetPresentationTimeStamp)
+        VideoTranscoder.firstNumericPresentationTime(
+            in: pendingSamples.map(
+                CMSampleBufferGetPresentationTimeStamp
+            )
+        )
+    }
+
+    var reachedEnd: Bool {
+        readerReachedEnd && pendingSamples.isEmpty
     }
 
     func prime() {
-        guard pendingSample == nil, !reachedEnd else {
+        guard pendingSamples.isEmpty, !readerReachedEnd else {
             return
         }
-        pendingSample = readerOutput.copyNextSampleBuffer()
-        if pendingSample == nil {
-            reachedEnd = true
-        }
+        bufferThroughNextNumericSample()
     }
 
     func setWriterSessionStartTime(_ value: CMTime) {
@@ -2594,17 +2610,16 @@ private final class PassthroughChannel {
         guard !reachedEnd else {
             return false
         }
-        if pendingSample == nil {
-            pendingSample = readerOutput.copyNextSampleBuffer()
-            if pendingSample == nil {
-                reachedEnd = true
-                return false
-            }
+        if pendingSamples.isEmpty {
+            bufferThroughNextNumericSample()
         }
-        guard let sample = pendingSample else {
+        guard let sample = pendingSamples.first else {
             return false
         }
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
+        let isUntimedPrefixBeforeNumericSample =
+            !presentationTime.isNumeric
+                && untimedPrefixSampleCount > 0
         if presentationTime.isNumeric {
             if let writerSessionStartTime,
                writerSessionStartTime.isNumeric,
@@ -2619,9 +2634,11 @@ private final class PassthroughChannel {
         }
         if VideoTranscoder.shouldDeferPassthroughSample(
             presentationTime: presentationTime,
-            through: limit
+            through: limit,
+            isUntimedPrefixBeforeNumericSample:
+                isUntimedPrefixBeforeNumericSample
         ) {
-            // 尚未到达交错点；无数值 PTS 的编解码预卷或尾样本也要等到
+            // 尚未到达交错点；没有后续数值 PTS 的编解码尾样本要等到
             // 最终排空，再交给 AVAssetWriter 原样承载。
             return false
         }
@@ -2639,8 +2656,35 @@ private final class PassthroughChannel {
                     ?? "非视频轨道 append 返回 false"
             )
         }
-        pendingSample = nil
+        pendingSamples.removeFirst()
+        if isUntimedPrefixBeforeNumericSample {
+            untimedPrefixSampleCount -= 1
+        }
         return true
+    }
+
+    private func bufferThroughNextNumericSample() {
+        guard pendingSamples.isEmpty, !readerReachedEnd else {
+            return
+        }
+
+        var newlyBufferedUntimedSamples = 0
+        while let sample = readerOutput.copyNextSampleBuffer() {
+            pendingSamples.append(sample)
+            let presentationTime = CMSampleBufferGetPresentationTimeStamp(
+                sample
+            )
+            if presentationTime.isNumeric {
+                // 无数值样本如果后面仍有数值 PTS，属于该数值样本前缀，
+                // 必须按原顺序先写；否则它会遮蔽真正的会话起点并反压
+                // 后续视频写入。只有读到轨尾仍无数值 PTS 的样本才延后
+                // 到最终排空。
+                untimedPrefixSampleCount += newlyBufferedUntimedSamples
+                return
+            }
+            newlyBufferedUntimedSamples += 1
+        }
+        readerReachedEnd = true
     }
 }
 

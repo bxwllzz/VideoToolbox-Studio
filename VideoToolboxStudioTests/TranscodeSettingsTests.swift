@@ -212,6 +212,31 @@ final class TranscodeSettingsTests: XCTestCase {
         )
     }
 
+    func test无时间戳前缀不会遮蔽后续元数据起点() {
+        let estimateStart = CMTime(
+            seconds: 3.8826666666666667,
+            preferredTimescale: 60_000
+        )
+        let metadataStart = VideoTranscoder.firstNumericPresentationTime(
+            in: [.invalid, .zero]
+        )
+
+        XCTAssertNotNil(metadataStart)
+        let resolved = VideoTranscoder.resolvedWriterSessionStartTime(
+            nominalStart: estimateStart,
+            firstSampleTimes: [metadataStart ?? .invalid]
+        )
+
+        XCTAssertEqual(CMTimeGetSeconds(resolved), 0, accuracy: 0.000_001)
+        XCTAssertFalse(
+            VideoTranscoder.shouldDeferPassthroughSample(
+                presentationTime: .invalid,
+                through: estimateStart,
+                isUntimedPrefixBeforeNumericSample: true
+            )
+        )
+    }
+
     func test无数值时间戳样本只在最终排空阶段写入() {
         XCTAssertTrue(
             VideoTranscoder.shouldDeferPassthroughSample(
