@@ -7,6 +7,7 @@ struct TranscodeMetrics: Codable, Equatable, Sendable {
     let droppedVideoFrames: Int
     let videoEncodingPasses: Int
     let copiedNonVideoSamples: Int
+    let writerSessionStartSeconds: Double
     let wallClockSeconds: Double
     let sourceDurationSeconds: Double
     let processingFramesPerSecond: Double
@@ -27,6 +28,7 @@ struct TranscodeReport: Encodable, Sendable {
     let input: MediaAssetSummary
     let output: MediaAssetSummary
     let propertyWrites: [PropertyWriteResult]
+    let runtimeDiagnostics: [TranscodeRuntimeDiagnosticsSnapshot]
     let hardwarePropertyQuery: APICallResult
     let usesHardwareEncoder: Bool
     let metrics: TranscodeMetrics

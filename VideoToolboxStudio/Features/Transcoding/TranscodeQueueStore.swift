@@ -38,6 +38,7 @@ struct TranscodeQueueJob: Identifiable {
     let source: TranscodeSource
     var state: State
     var result: TranscodeResult?
+    var runtimeDiagnostics: TranscodeRuntimeDiagnosticsSnapshot?
     var photoSaveState: TranscodePhotoSaveState
     var sourceDeletionState: TranscodeSourceDeletionState
 
@@ -46,6 +47,7 @@ struct TranscodeQueueJob: Identifiable {
         self.source = source
         state = .queued
         result = nil
+        runtimeDiagnostics = nil
         photoSaveState = .notRequested
         sourceDeletionState = source.photoLibraryAssetIdentifier == nil
             ? .deleted
@@ -228,6 +230,7 @@ final class TranscodeQueueStore: ObservableObject {
                 let token = EncodingCancellationToken()
                 cancellationToken = token
                 setState(.running(0), for: jobID)
+                setRuntimeDiagnostics(nil, for: jobID)
 
                 do {
                     let worker = Task.detached(priority: .userInitiated) {
@@ -235,7 +238,15 @@ final class TranscodeQueueStore: ObservableObject {
                             source: source,
                             settings: requestedSettings,
                             buildReport: buildReport,
-                            cancellationToken: token
+                            cancellationToken: token,
+                            diagnostics: { [weak self] snapshot in
+                                Task { @MainActor in
+                                    self?.setRuntimeDiagnostics(
+                                        snapshot,
+                                        for: jobID
+                                    )
+                                }
+                            }
                         ) { [weak self] value in
                             Task { @MainActor in
                                 self?.setProgress(value, for: jobID)
@@ -415,6 +426,18 @@ final class TranscodeQueueStore: ObservableObject {
             return
         }
         jobs[index].result = result
+        jobs[index].runtimeDiagnostics =
+            result.report.runtimeDiagnostics.last
+    }
+
+    private func setRuntimeDiagnostics(
+        _ snapshot: TranscodeRuntimeDiagnosticsSnapshot?,
+        for id: UUID
+    ) {
+        guard let index = jobs.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        jobs[index].runtimeDiagnostics = snapshot
     }
 
     private func saveResultToPhotoLibrary(for id: UUID) async {

@@ -293,10 +293,18 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "没有显示本机只读或不支持的 MaxFrameDelayCount。"
         )
         XCTAssertFalse(
-            readOnlyProperty.isEnabled,
-            "本机不可写的 MaxFrameDelayCount 没有置灰。"
+            app.textFields["native-property-MaxFrameDelayCount"].exists
+                || app.switches["native-property-MaxFrameDelayCount"].exists
+                || app.buttons["native-property-MaxFrameDelayCount"].exists,
+            "本机不可写的 MaxFrameDelayCount 被暴露成了可编辑控件。"
         )
         let nativeReadOnlyPropertyLabel = readOnlyProperty.label
+        XCTAssertTrue(
+            nativeReadOnlyPropertyLabel.contains("本机只读")
+                && !nativeReadOnlyPropertyLabel.contains("未返回值"),
+            "本机只读字段没有同时提供当前值或查询状态："
+                + nativeReadOnlyPropertyLabel
+        )
 
         let runButton = app.buttons["transcode-start"]
         makeHittable(runButton, in: app)
@@ -305,6 +313,22 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "从系统照片库取得 AVAsset 后没有进入压缩设置页。"
         )
         runButton.tap()
+
+        let runtimeDiagnostics = app.descendants(
+            matching: .any
+        ).matching(
+            identifier: "transcode-runtime-diagnostics"
+        ).firstMatch
+        makeHittableFromBelow(runtimeDiagnostics, in: app)
+        XCTAssertTrue(
+            waitForExistenceWhileAppRuns(
+                runtimeDiagnostics,
+                in: app,
+                timeout: 30
+            ),
+            "编码过程没有显示只读状态与诊断数据。"
+        )
+        let runtimeDiagnosticsLabel = runtimeDiagnostics.label
 
         let summary = app.staticTexts["cloud-transcode-summary"]
         let error = app.staticTexts["cloud-transcode-error"]
@@ -339,10 +363,15 @@ final class CapabilityProbeCloudUITests: XCTestCase {
                 && summary.label.contains("保真核验通过"),
             "真实转码或输出复核没有通过：\(summary.label)"
         )
+        let hasNonPositiveWriterStart =
+            metrics.label.contains("写入起点 -")
+                || metrics.label.contains("写入起点 0.")
         XCTAssertTrue(
             metrics.label.contains("300 帧")
-                && metrics.label.contains("遍"),
-            "10 秒 30 fps 素材没有完整输出 300 帧或编码遍次证据：\(metrics.label)"
+                && metrics.label.contains("遍")
+                && hasNonPositiveWriterStart,
+            "10 秒 30 fps 素材没有完整输出 300 帧、编码遍次或不晚于"
+                + "视频起点的写入会话证据：\(metrics.label)"
         )
         let summaryLabel = summary.label
         let metricsLabel = metrics.label
@@ -353,6 +382,20 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             photoSaveSuccess.waitForExistence(timeout: 30),
             "转换完成后没有默认保存到系统照片库。"
         )
+        let finalDiagnostics = app.staticTexts.matching(
+            identifier: "transcode-runtime-diagnostics"
+        ).matching(
+            NSPredicate(
+                format: "label CONTAINS %@",
+                "输出容器写入完成"
+            )
+        ).firstMatch
+        makeHittable(finalDiagnostics, in: app)
+        XCTAssertTrue(
+            finalDiagnostics.waitForExistence(timeout: 30),
+            "转码结束后没有保留最终写入阶段的只读状态与诊断数据。"
+        )
+        let finalDiagnosticsLabel = finalDiagnostics.label
 
         let settingsNavigationBar = app.navigationBars["压缩设置"]
         let backButton = settingsNavigationBar.buttons.firstMatch
@@ -371,6 +414,8 @@ final class CapabilityProbeCloudUITests: XCTestCase {
             "native_capability": nativeCapabilityLabel,
             "native_average_bit_rate": nativeAverageBitRateLabel,
             "native_read_only_property": nativeReadOnlyPropertyLabel,
+            "runtime_diagnostics_during_encoding": runtimeDiagnosticsLabel,
+            "runtime_diagnostics_after_encoding": finalDiagnosticsLabel,
             "summary": summaryLabel,
             "metrics": metricsLabel,
             "multi_pass": multiPassLabel,

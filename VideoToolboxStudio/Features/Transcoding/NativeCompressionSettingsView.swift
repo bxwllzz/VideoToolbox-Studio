@@ -10,6 +10,8 @@ struct NativeCompressionSettingsView: View {
     @State private var jsonEditor: NativeCompressionJSONEditorItem?
     @State private var jsonDraft = ""
     @State private var jsonError: String?
+    @State private var expandedCategories:
+        Set<NativeCompressionPropertyCategory> = []
 
     var body: some View {
         Group {
@@ -20,12 +22,8 @@ struct NativeCompressionSettingsView: View {
             }
             diagnosticsSection
         }
-        .alert(item: $activeHelp) { help in
-            Alert(
-                title: Text(help.title),
-                message: Text(help.message),
-                dismissButton: .default(Text("知道了"))
-            )
+        .sheet(item: $activeHelp) { help in
+            NativeCompressionHelpView(help: help)
         }
         .sheet(item: $jsonEditor) { item in
             jsonEditorView(item)
@@ -46,7 +44,14 @@ struct NativeCompressionSettingsView: View {
                     title: "codecType",
                     message: "原生创建参数：VTCompressionSessionCreate 的 codecType。"
                         + "H.264 对应 kCMVideoCodecType_H264；HEVC 对应 "
-                        + "kCMVideoCodecType_HEVC。"
+                        + "kCMVideoCodecType_HEVC。\n\n"
+                        + "影响：H.264 兼容性更广；HEVC 通常压缩效率更高，"
+                        + "并承载 10-bit、HDR、Alpha 和多视角等高级能力。",
+                    documentationURL: URL(
+                        string:
+                            "https://developer.apple.com/documentation/"
+                            + "videotoolbox/vtcompressionsessioncreate"
+                    )
                 )
                 Spacer()
                 Picker("", selection: codecBinding) {
@@ -107,7 +112,14 @@ struct NativeCompressionSettingsView: View {
                         + "kVTCompressionPropertyKey_ConstantBitRate、"
                         + "kVTCompressionPropertyKey_VariableBitRate、"
                         + "kVTCompressionPropertyKey_Quality、"
-                        + "kVTCompressionPropertyKey_ConstantQualityFactor。"
+                        + "kVTCompressionPropertyKey_ConstantQualityFactor。\n\n"
+                        + "影响：一次只选一种主控制目标，避免编码器同时收到"
+                        + "互相矛盾的码率或质量约束。",
+                    documentationURL: URL(
+                        string:
+                            "https://developer.apple.com/documentation/"
+                            + "videotoolbox/compression-properties"
+                    )
                 )
                 Spacer()
                 rateControlMenu
@@ -178,23 +190,62 @@ struct NativeCompressionSettingsView: View {
         }
     }
 
+    @ViewBuilder
     private func categorySection(
         _ category: NativeCompressionPropertyCategory
     ) -> some View {
-        Section {
-            let descriptors = visibleDescriptors(in: category)
-            if descriptors.isEmpty {
-                Text("当前编码类型没有此类公开字段")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(descriptors) { descriptor in
-                    nativePropertyRow(descriptor)
+        if category.isCollapsedByDefault {
+            Section {
+                DisclosureGroup(
+                    isExpanded: categoryExpansionBinding(category)
+                ) {
+                    categoryRows(category)
+                } label: {
+                    Text(category.title)
+                }
+                .accessibilityIdentifier(
+                    "native-category-\(category.rawValue)"
+                )
+            }
+            .disabled(isDisabled)
+        } else {
+            Section {
+                categoryRows(category)
+            } header: {
+                Text(category.title)
+            }
+            .disabled(isDisabled)
+        }
+    }
+
+    @ViewBuilder
+    private func categoryRows(
+        _ category: NativeCompressionPropertyCategory
+    ) -> some View {
+        let descriptors = visibleDescriptors(in: category)
+        if descriptors.isEmpty {
+            Text("当前编码类型没有此类公开字段")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(descriptors) { descriptor in
+                nativePropertyRow(descriptor)
+            }
+        }
+    }
+
+    private func categoryExpansionBinding(
+        _ category: NativeCompressionPropertyCategory
+    ) -> Binding<Bool> {
+        Binding(
+            get: { expandedCategories.contains(category) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedCategories.insert(category)
+                } else {
+                    expandedCategories.remove(category)
                 }
             }
-        } header: {
-            Text(category.title)
-        }
-        .disabled(isDisabled)
+        )
     }
 
     private var diagnosticsSection: some View {
@@ -236,27 +287,53 @@ struct NativeCompressionSettingsView: View {
             unavailableRow(descriptor, reason: "检测中")
         case .unsupported:
             unavailableRow(descriptor, reason: "本机不支持")
-        case .readOnly:
-            unavailableRow(descriptor, reason: "本机只读")
-        case .notPubliclySettable:
-            unavailableRow(descriptor, reason: "原生只读")
+        case .readOnly(let capability):
+            unavailableRow(
+                descriptor,
+                reason: "本机只读",
+                capability: capability
+            )
+        case .notPubliclySettable(let capability):
+            unavailableRow(
+                descriptor,
+                reason: "原生只读",
+                capability: capability
+            )
         }
     }
 
     private func unavailableRow(
         _ descriptor: NativeCompressionPropertyDescriptor,
-        reason: String
+        reason: String,
+        capability: NativeCompressionPropertyCapability? = nil
     ) -> some View {
         HStack {
-            descriptorTitle(descriptor, reason: reason)
+            descriptorTitle(
+                descriptor,
+                reason: reason,
+                capability: capability
+            )
             Spacer()
-            Text(reason)
-                .font(.caption)
-                .disabled(true)
-                .accessibilityLabel("\(descriptor.key)，\(reason)")
-                .accessibilityIdentifier(
-                    "native-property-\(descriptor.key)"
-                )
+            VStack(alignment: .trailing, spacing: 2) {
+                if let readback = capability?.readback {
+                    Text(readback.displayText)
+                        .font(.caption.monospaced())
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                }
+                Text(reason)
+                    .font(.caption2)
+            }
+            .disabled(true)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "\(descriptor.key)，"
+                    + "\(capability?.readback?.displayText ?? "未返回值")，"
+                    + reason
+            )
+            .accessibilityIdentifier(
+                "native-property-\(descriptor.key)"
+            )
         }
         .foregroundStyle(.secondary)
     }
@@ -567,7 +644,8 @@ struct NativeCompressionSettingsView: View {
         return helpTitle(
             descriptor.title,
             title: descriptor.title,
-            message: descriptor.helpMessage + rangeText + supportText
+            message: descriptor.helpMessage + rangeText + supportText,
+            documentationURL: descriptor.documentationURL
         )
     }
 
@@ -592,7 +670,8 @@ struct NativeCompressionSettingsView: View {
     private func helpTitle(
         _ text: String,
         title: String,
-        message: String
+        message: String,
+        documentationURL: URL? = nil
     ) -> some View {
         HStack(spacing: 6) {
             Text(text)
@@ -600,7 +679,8 @@ struct NativeCompressionSettingsView: View {
                 activeHelp = NativeCompressionHelp(
                     id: title,
                     title: title,
-                    message: message
+                    message: message,
+                    documentationURL: documentationURL
                 )
             } label: {
                 Image(systemName: "info.circle")
@@ -632,23 +712,26 @@ struct NativeCompressionSettingsView: View {
     private func availability(
         for descriptor: NativeCompressionPropertyDescriptor
     ) -> NativeCompressionAvailability {
-        guard descriptor.isPubliclySettable else {
-            return .notPubliclySettable
-        }
         switch capabilityState {
         case .loading:
             return .loading
         case .failed:
-            return .unsupported
+            return descriptor.isPubliclySettable
+                ? .unsupported
+                : .notPubliclySettable(nil)
         case .ready(let capabilities):
-            guard let capability = capabilities.capability(for: descriptor) else {
+            let capability = capabilities.capability(for: descriptor)
+            guard descriptor.isPubliclySettable else {
+                return .notPubliclySettable(capability)
+            }
+            guard let capability else {
                 return .unsupported
             }
             if capability.isWritable {
                 return .writable(capability)
             }
             if capability.isReadOnly {
-                return .readOnly
+                return .readOnly(capability)
             }
             return .unsupported
         }
@@ -753,15 +836,52 @@ struct NativeCompressionSettingsView: View {
 private enum NativeCompressionAvailability {
     case loading
     case writable(NativeCompressionPropertyCapability)
-    case readOnly
+    case readOnly(NativeCompressionPropertyCapability)
     case unsupported
-    case notPubliclySettable
+    case notPubliclySettable(NativeCompressionPropertyCapability?)
 }
 
 private struct NativeCompressionHelp: Identifiable {
     let id: String
     let title: String
     let message: String
+    let documentationURL: URL?
+}
+
+private struct NativeCompressionHelpView: View {
+    @Environment(\.dismiss) private var dismiss
+    let help: NativeCompressionHelp
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(help.message)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                    if let documentationURL = help.documentationURL {
+                        Link(destination: documentationURL) {
+                            Label(
+                                "查看 Apple 官方文档",
+                                systemImage: "safari"
+                            )
+                        }
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle(help.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
 }
 
 private struct NativeCompressionJSONEditorItem: Identifiable {

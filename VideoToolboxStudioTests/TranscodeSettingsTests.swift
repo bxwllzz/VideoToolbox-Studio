@@ -161,6 +161,96 @@ final class TranscodeSettingsTests: XCTestCase {
                 )
             }
         )
+        XCTAssertTrue(
+            descriptors.allSatisfy {
+                $0.helpMessage.contains("影响：")
+                    && NativeCompressionPropertyImpact.hasDedicatedText(
+                        for: $0.key
+                    )
+            }
+        )
+        XCTAssertTrue(
+            descriptors.allSatisfy {
+                $0.documentationURL?.host == "developer.apple.com"
+            }
+        )
+    }
+
+    func test高阶画面分组默认收缩() {
+        let collapsed = Set(
+            NativeCompressionPropertyCategory.allCases.filter(
+                \.isCollapsedByDefault
+            )
+        )
+
+        XCTAssertEqual(
+            collapsed,
+            [.colorAndGeometry, .alphaHDR, .spatialVideo]
+        )
+    }
+
+    func test写入会话起点采用真实首样本的更早时间戳() {
+        let nominal = CMTime.zero
+        let audioPriming = CMTime(
+            seconds: -0.047891,
+            preferredTimescale: 44_100
+        )
+
+        let resolved = VideoTranscoder.resolvedWriterSessionStartTime(
+            nominalStart: nominal,
+            firstSampleTimes: [
+                .invalid,
+                CMTime(seconds: 0.1, preferredTimescale: 600),
+                audioPriming,
+            ]
+        )
+
+        XCTAssertEqual(
+            CMTimeGetSeconds(resolved),
+            CMTimeGetSeconds(audioPriming),
+            accuracy: 0.000_001
+        )
+    }
+
+    func test无数值时间戳样本只在最终排空阶段写入() {
+        XCTAssertTrue(
+            VideoTranscoder.shouldDeferPassthroughSample(
+                presentationTime: .invalid,
+                through: .zero
+            )
+        )
+        XCTAssertFalse(
+            VideoTranscoder.shouldDeferPassthroughSample(
+                presentationTime: .invalid,
+                through: .positiveInfinity
+            )
+        )
+    }
+
+    func test只读回读区分当前值空值和查询失败() {
+        XCTAssertEqual(
+            NativeCompressionPropertyReadback(
+                key: "NumberOfPendingFrames",
+                value: .number(3),
+                status: noErr
+            ).displayText,
+            "3"
+        )
+        XCTAssertEqual(
+            NativeCompressionPropertyReadback(
+                key: "UsingGPURegistryID",
+                value: nil,
+                status: noErr
+            ).displayText,
+            "系统返回空值"
+        )
+        XCTAssertTrue(
+            NativeCompressionPropertyReadback(
+                key: "UsingGPURegistryID",
+                value: nil,
+                status: -12_900
+            ).displayText.contains("OSStatus -12900")
+        )
     }
 
     func test原生参数目录覆盖80个iPhone公开字段() {
